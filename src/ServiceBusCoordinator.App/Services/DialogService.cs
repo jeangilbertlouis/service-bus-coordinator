@@ -1,0 +1,229 @@
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Layout;
+using Avalonia.Media;
+using ServiceBusCoordinator.Core.Connections;
+using ServiceBusCoordinator.Core.Models;
+
+namespace ServiceBusCoordinator.App.Services;
+
+/// <summary>Modal dialogs built in code. Each returns null / false when cancelled.</summary>
+public sealed class DialogService(Window owner) : IDialogService
+{
+    public async Task<ConnectionProfile?> AddConnectionAsync()
+    {
+        var name = new TextBox { PlaceholderText = "e.g. Production orders" };
+        var connectionString = new TextBox
+        {
+            PlaceholderText = "Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=…;SharedAccessKey=…",
+            PasswordChar = '•',
+        };
+        var reveal = new CheckBox { Content = "Show connection string" };
+        reveal.IsCheckedChanged += (_, _) => connectionString.RevealPassword = reveal.IsChecked == true;
+        var error = ErrorText();
+
+        ConnectionProfile? result = null;
+        var dialog = BuildDialog("Add connection", 560, out var ok, out var body, "Add");
+        body.Children.Add(Label("Display name"));
+        body.Children.Add(name);
+        body.Children.Add(Label("Connection string"));
+        body.Children.Add(connectionString);
+        body.Children.Add(reveal);
+        body.Children.Add(Muted("Stored in your operating system's secure storage (DPAPI / Keychain / libsecret)."));
+        body.Children.Add(error);
+
+        ok.Click += (_, _) =>
+        {
+            if (!ConnectionStringInfo.TryParse(connectionString.Text, out var info, out var parseError))
+            {
+                error.Text = parseError;
+                error.IsVisible = true;
+                return;
+            }
+
+            result = new ConnectionProfile
+            {
+                Name = string.IsNullOrWhiteSpace(name.Text) ? info!.FullyQualifiedNamespace : name.Text.Trim(),
+                ConnectionString = connectionString.Text!.Trim(),
+            };
+            dialog.Close();
+        };
+
+        await dialog.ShowDialog(owner);
+        return result;
+    }
+
+    public async Task<string?> PromptAsync(string title, string message, string watermark)
+    {
+        var input = new TextBox { PlaceholderText = watermark };
+        string? result = null;
+        var dialog = BuildDialog(title, 480, out var ok, out var body, "OK");
+        body.Children.Add(Text(message));
+        body.Children.Add(input);
+        ok.Click += (_, _) =>
+        {
+            result = input.Text;
+            dialog.Close();
+        };
+
+        await dialog.ShowDialog(owner);
+        return result;
+    }
+
+    public async Task<bool> ConfirmAsync(string title, string message, string confirmLabel, string? typeToConfirm = null)
+    {
+        var result = false;
+        var dialog = BuildDialog(title, 480, out var ok, out var body, confirmLabel);
+        body.Children.Add(Text(message));
+
+        if (typeToConfirm is not null)
+        {
+            var input = new TextBox { PlaceholderText = typeToConfirm };
+            body.Children.Add(Text($"Type '{typeToConfirm}' to confirm:"));
+            body.Children.Add(input);
+            ok.IsEnabled = false;
+            input.TextChanged += (_, _) => ok.IsEnabled = input.Text == typeToConfirm;
+        }
+
+        ok.Click += (_, _) =>
+        {
+            result = true;
+            dialog.Close();
+        };
+
+        await dialog.ShowDialog(owner);
+        return result;
+    }
+
+    public async Task<ResubmitChoice?> ChooseResubmitAsync(EntityInfo source, string scopeDescription, IReadOnlyList<EntityInfo> targets)
+    {
+        var defaultTarget = source.DefaultResubmitTarget!;
+        var useDefault = new RadioButton
+        {
+            GroupName = "target",
+            IsChecked = true,
+            Content = source.Kind == EntityKind.Subscription ? $"Topic '{defaultTarget}' (original)" : $"Queue '{defaultTarget}' (original)",
+        };
+        var useOther = new RadioButton { GroupName = "target", Content = "Another queue or topic:" };
+        var other = new ComboBox
+        {
+            ItemsSource = targets.Select(t => (t.Kind == EntityKind.Topic ? "topic: " : "queue: ") + t.Path).ToList(),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            IsEnabled = false,
+        };
+        var otherManual = new TextBox { PlaceholderText = "…or type an entity name", IsEnabled = false };
+        useOther.IsCheckedChanged += (_, _) => other.IsEnabled = otherManual.IsEnabled = useOther.IsChecked == true;
+
+        var strip = new CheckBox { Content = "Remove DeadLetterReason / DeadLetterErrorDescription properties" };
+        var stamp = new CheckBox { Content = "Add x-resubmitted-* headers (time, source, count)", IsChecked = true };
+
+        var topicWarning = new Border
+        {
+            Classes = { "banner" },
+            Child = Text("This target is a topic: the message will be delivered to EVERY subscription whose rules match, "
+                + "not only the one it was dead-lettered from."),
+        };
+        var error = ErrorText();
+
+        string? ResolveTarget()
+        {
+            if (useDefault.IsChecked == true)
+            {
+                return defaultTarget;
+            }
+
+            if (!string.IsNullOrWhiteSpace(otherManual.Text))
+            {
+                return otherManual.Text.Trim();
+            }
+
+            return other.SelectedItem is string s ? s[(s.IndexOf(':') + 2)..] : null;
+        }
+
+        bool IsTopic(string? path) =>
+            path is not null && (targets.Any(t => t.Kind == EntityKind.Topic && t.Path.Equals(path, StringComparison.OrdinalIgnoreCase))
+                || (useDefault.IsChecked == true && source.Kind == EntityKind.Subscription));
+
+        void UpdateWarning() => topicWarning.IsVisible = IsTopic(ResolveTarget());
+        useDefault.IsCheckedChanged += (_, _) => UpdateWarning();
+        other.SelectionChanged += (_, _) => UpdateWarning();
+        otherManual.TextChanged += (_, _) => UpdateWarning();
+        UpdateWarning();
+
+        ResubmitChoice? result = null;
+        var dialog = BuildDialog("Resubmit dead-lettered messages", 560, out var ok, out var body, "Resubmit");
+        body.Children.Add(Text($"Move {scopeDescription} from '{source.Path}/$deadletterqueue' to:"));
+        body.Children.Add(useDefault);
+        body.Children.Add(useOther);
+        body.Children.Add(other);
+        body.Children.Add(otherManual);
+        body.Children.Add(topicWarning);
+        body.Children.Add(strip);
+        body.Children.Add(stamp);
+        body.Children.Add(Muted("Each message is sent and removed from the dead-letter queue in one transaction where the service allows it; "
+            + "otherwise it is sent first and then removed, so a failure can duplicate but never lose a message."));
+        body.Children.Add(error);
+
+        ok.Click += (_, _) =>
+        {
+            var target = ResolveTarget();
+            if (string.IsNullOrWhiteSpace(target))
+            {
+                error.Text = "Choose a target entity.";
+                error.IsVisible = true;
+                return;
+            }
+
+            result = new ResubmitChoice(target, strip.IsChecked == true, stamp.IsChecked == true);
+            dialog.Close();
+        };
+
+        await dialog.ShowDialog(owner);
+        return result;
+    }
+
+    public async Task ShowMessageAsync(string title, string message)
+    {
+        var dialog = BuildDialog(title, 520, out var ok, out var body, "OK", showCancel: false);
+        body.Children.Add(new SelectableTextBlock { Text = message, TextWrapping = TextWrapping.Wrap });
+        ok.Click += (_, _) => dialog.Close();
+        await dialog.ShowDialog(owner);
+    }
+
+    private static Window BuildDialog(string title, double width, out Button ok, out StackPanel body, string okLabel, bool showCancel = true)
+    {
+        body = new StackPanel { Spacing = 8 };
+        ok = new Button { Content = okLabel, IsDefault = true, MinWidth = 90, HorizontalContentAlignment = HorizontalAlignment.Center };
+        var cancel = new Button { Content = "Cancel", IsCancel = true, MinWidth = 90, HorizontalContentAlignment = HorizontalAlignment.Center, IsVisible = showCancel };
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Spacing = 8,
+            Margin = new Thickness(0, 16, 0, 0),
+            Children = { ok, cancel },
+        };
+
+        var window = new Window
+        {
+            Title = title,
+            Width = width,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            ShowInTaskbar = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Content = new StackPanel { Margin = new Thickness(20), Children = { body, buttons } },
+        };
+        cancel.Click += (_, _) => window.Close();
+        return window;
+    }
+
+    private static TextBlock Text(string text) => new() { Text = text, TextWrapping = TextWrapping.Wrap };
+
+    private static TextBlock Label(string text) => new() { Text = text, FontWeight = FontWeight.SemiBold };
+
+    private static TextBlock Muted(string text) => new() { Text = text, TextWrapping = TextWrapping.Wrap, FontSize = 12, Opacity = 0.65 };
+
+    private static TextBlock ErrorText() => new() { Foreground = Brushes.IndianRed, TextWrapping = TextWrapping.Wrap, IsVisible = false };
+}

@@ -1,0 +1,202 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:ServiceBusCoordinator.App.ViewModels"
+        x:Class="ServiceBusCoordinator.App.Views.MainWindow"
+        x:DataType="vm:MainWindowViewModel"
+        Title="Service Bus Coordinator"
+        Width="1400" Height="860" MinWidth="900" MinHeight="500"
+        WindowStartupLocation="CenterScreen">
+
+  <Window.Resources>
+    <FontFamily x:Key="Mono">Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace</FontFamily>
+  </Window.Resources>
+
+  <Grid ColumnDefinitions="340,4,*">
+
+    <!-- ===== Left: connections + entity tree ===== -->
+    <DockPanel Grid.Column="0" Margin="8">
+      <StackPanel DockPanel.Dock="Top" Spacing="6" Margin="0,0,0,8">
+        <WrapPanel>
+          <Button Content="+ Connection" Command="{Binding AddConnectionCommand}" Margin="0,0,4,4"
+                  ToolTip.Tip="Add a namespace using a connection string" />
+          <Button Content="+ Entity" Command="{Binding AddEntityCommand}" Margin="0,0,4,4"
+                  ToolTip.Tip="Add a queue or subscription by name (for connections without Manage rights)" />
+          <Button Content="Refresh" Command="{Binding RefreshNamespaceCommand}" Margin="0,0,4,4" />
+          <Button Content="Remove" Command="{Binding RemoveConnectionCommand}" Margin="0,0,4,4" />
+        </WrapPanel>
+        <Border Classes="banner" IsVisible="{Binding StorageWarning, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <TextBlock Text="{Binding StorageWarning}" TextWrapping="Wrap" FontSize="12" />
+        </Border>
+      </StackPanel>
+
+      <Panel>
+        <TextBlock Classes="muted" TextWrapping="Wrap" Margin="4"
+                   IsVisible="{Binding !Namespaces.Count}"
+                   Text="No connections yet. Click '+ Connection' and paste a Service Bus connection string." />
+        <TreeView ItemsSource="{Binding Namespaces}" SelectedItem="{Binding SelectedNode}">
+          <TreeView.Styles>
+            <Style Selector="TreeViewItem" x:DataType="vm:TreeNodeViewModel">
+              <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
+            </Style>
+          </TreeView.Styles>
+          <TreeView.DataTemplates>
+            <TreeDataTemplate DataType="vm:NamespaceNodeViewModel" ItemsSource="{Binding Children}">
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="{Binding Glyph}" Foreground="#0078D4" VerticalAlignment="Center" />
+                <StackPanel>
+                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold" />
+                  <TextBlock Text="{Binding Badge}" Classes="muted" FontSize="11" />
+                </StackPanel>
+                <TextBlock Text="⟳" IsVisible="{Binding IsLoading}" VerticalAlignment="Center" />
+                <TextBlock Text="⚠" Foreground="#E81123" VerticalAlignment="Center"
+                           IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                <TextBlock Text="🔒" VerticalAlignment="Center" ToolTip.Tip="Limited access"
+                           IsVisible="{Binding LimitedAccessReason, Converter={x:Static ObjectConverters.IsNotNull}}" />
+              </StackPanel>
+            </TreeDataTemplate>
+            <TreeDataTemplate DataType="vm:TreeNodeViewModel" ItemsSource="{Binding Children}">
+              <StackPanel Orientation="Horizontal" Spacing="6">
+                <TextBlock Text="{Binding Glyph}" Classes="muted" FontFamily="{StaticResource Mono}" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
+                <TextBlock Text="{Binding Badge}" Classes="muted" FontSize="11" VerticalAlignment="Center" />
+              </StackPanel>
+            </TreeDataTemplate>
+          </TreeView.DataTemplates>
+        </TreeView>
+      </Panel>
+    </DockPanel>
+
+    <GridSplitter Grid.Column="1" ResizeDirection="Columns" />
+
+    <!-- ===== Right: namespace info or entity messages ===== -->
+    <Panel Grid.Column="2" Margin="12,8,8,8">
+
+      <!-- Namespace / nothing selected -->
+      <StackPanel Spacing="8" IsVisible="{Binding !HasEntity}">
+        <StackPanel Spacing="8" IsVisible="{Binding SelectedNamespace, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <TextBlock Classes="h1" Text="{Binding SelectedNamespace.Title}" />
+          <TextBlock Classes="muted" Text="{Binding SelectedNamespace.Badge}" />
+          <TextBlock Text="Loading entities…" IsVisible="{Binding SelectedNamespace.IsLoading}" />
+          <Border Classes="danger" IsVisible="{Binding SelectedNamespace.Error, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <TextBlock Text="{Binding SelectedNamespace.Error}" TextWrapping="Wrap" />
+          </Border>
+          <Border Classes="banner" IsVisible="{Binding SelectedNamespace.LimitedAccessReason, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <TextBlock Text="{Binding SelectedNamespace.LimitedAccessReason}" TextWrapping="Wrap" />
+          </Border>
+          <TextBlock Classes="muted" Text="Select a queue or subscription to view its messages." />
+        </StackPanel>
+        <TextBlock Classes="muted" Margin="0,40,0,0" HorizontalAlignment="Center"
+                   IsVisible="{Binding SelectedNamespace, Converter={x:Static ObjectConverters.IsNull}}"
+                   Text="Select a namespace, queue or subscription on the left." />
+      </StackPanel>
+
+      <!-- Entity -->
+      <Panel IsVisible="{Binding HasEntity}">
+      <DockPanel DataContext="{Binding CurrentEntity}" x:DataType="vm:EntityViewModel">
+
+        <StackPanel DockPanel.Dock="Top" Spacing="4">
+          <TextBlock Classes="h1" Text="{Binding Title}" />
+          <TextBlock Classes="muted" Text="{Binding KindLabel}" />
+          <TextBlock Text="{Binding CountsText}" FontSize="12" />
+
+          <WrapPanel Margin="0,8,0,0">
+            <ToggleSwitch IsChecked="{Binding ShowDeadLetter}" IsEnabled="{Binding !IsBusy}"
+                          OffContent="Active" OnContent="Dead-letter" Margin="0,0,12,4" />
+            <Button Content="Refresh" Command="{Binding RefreshCommand}" Margin="0,0,4,4" />
+            <Button Content="Load more" Command="{Binding LoadMoreCommand}" Margin="0,0,12,4" />
+            <Button Content="Resubmit selected" Command="{Binding ResubmitSelectedCommand}" Margin="0,0,4,4"
+                    IsVisible="{Binding ShowDeadLetter}" />
+            <Button Content="Resubmit all" Command="{Binding ResubmitAllCommand}" Margin="0,0,12,4"
+                    IsVisible="{Binding ShowDeadLetter}" />
+            <Button Content="Purge…" Command="{Binding PurgeCommand}" Margin="0,0,4,4" Foreground="#E81123" />
+            <Button Content="Cancel" Command="{Binding CancelCommand}" Margin="12,0,4,4" IsVisible="{Binding IsBusy}" />
+          </WrapPanel>
+
+          <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBusy}" Height="3" MinHeight="3" />
+          <TextBlock Text="{Binding StatusText}" Classes="muted" FontSize="12" />
+          <Border Classes="danger" IsVisible="{Binding Error, Converter={x:Static ObjectConverters.IsNotNull}}">
+            <TextBlock Text="{Binding Error}" TextWrapping="Wrap" />
+          </Border>
+        </StackPanel>
+
+        <Grid RowDefinitions="*,4,*" Margin="0,8,0,0">
+
+          <!-- Message list -->
+          <DockPanel Grid.Row="0">
+            <Grid DockPanel.Dock="Top" ColumnDefinitions="36,90,220,150,150,50,200,*" Margin="4,0,0,4">
+              <CheckBox Grid.Column="0" ToolTip.Tip="Tick / untick all"
+                        Command="{Binding CheckAllCommand}"
+                        CommandParameter="{Binding $self.IsChecked}" />
+              <TextBlock Grid.Column="1" Text="Seq #" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="2" Text="Message ID" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="3" Text="Subject" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="4" Text="Enqueued" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="5" Text="Tries" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="6" Text="Dead-letter reason" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="7" Text="Body" FontWeight="SemiBold" VerticalAlignment="Center" />
+            </Grid>
+            <ListBox ItemsSource="{Binding Messages}" SelectedItem="{Binding SelectedMessage}">
+              <ListBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:MessageRowViewModel">
+                  <Grid ColumnDefinitions="36,90,220,150,150,50,200,*">
+                    <CheckBox Grid.Column="0" IsChecked="{Binding IsChecked}" />
+                    <TextBlock Grid.Column="1" Text="{Binding SequenceNumber}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Text="{Binding MessageId}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="3" Text="{Binding Subject}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="4" Text="{Binding Enqueued}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="5" Text="{Binding DeliveryCount}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="6" Text="{Binding DeadLetterReason}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="7" Text="{Binding BodyPreview}" TextTrimming="CharacterEllipsis"
+                               FontFamily="{StaticResource Mono}" FontSize="12" VerticalAlignment="Center" />
+                  </Grid>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+          </DockPanel>
+
+          <GridSplitter Grid.Row="1" ResizeDirection="Rows" />
+
+          <!-- Message detail -->
+          <TabControl Grid.Row="2" DataContext="{Binding SelectedMessage}" x:DataType="vm:MessageRowViewModel">
+            <TabItem Header="Body">
+              <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Classes="muted" FontSize="12" Text="{Binding BodyKindLabel}" Margin="0,0,0,4" />
+                <TextBox Text="{Binding BodyText, Mode=OneWay}" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                         FontFamily="{StaticResource Mono}" FontSize="12" />
+              </DockPanel>
+            </TabItem>
+            <TabItem Header="Properties">
+              <ScrollViewer>
+                <ItemsControl ItemsSource="{Binding SystemProperties}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:PropertyRow">
+                      <Grid ColumnDefinitions="220,*" Margin="0,2">
+                        <TextBlock Text="{Binding Name}" Classes="muted" />
+                        <SelectableTextBlock Grid.Column="1" Text="{Binding Value}" TextWrapping="Wrap" />
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </TabItem>
+            <TabItem Header="Application properties">
+              <ScrollViewer>
+                <ItemsControl ItemsSource="{Binding ApplicationProperties}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:PropertyRow">
+                      <Grid ColumnDefinitions="220,*" Margin="0,2">
+                        <TextBlock Text="{Binding Name}" Classes="muted" />
+                        <SelectableTextBlock Grid.Column="1" Text="{Binding Value}" TextWrapping="Wrap" />
+                      </Grid>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </TabItem>
+          </TabControl>
+        </Grid>
+      </DockPanel>
+      </Panel>
+    </Panel>
+  </Grid>
+</Window>
