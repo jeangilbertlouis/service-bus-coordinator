@@ -6,6 +6,25 @@ namespace ServiceBusCoordinator.Core.Connections;
 /// <summary>Non-secret facts parsed from a Service Bus connection string.</summary>
 public sealed partial record ConnectionStringInfo(string FullyQualifiedNamespace, string? EntityPath, string? KeyName, bool IsEmulator = false)
 {
+    /// <summary>
+    /// Short namespace name for display, e.g. <c>contoso</c> from <c>contoso.servicebus.windows.net</c>.
+    /// Emulator hosts are labelled as such, e.g. <c>localhost (emulator)</c>.
+    /// </summary>
+    public string NamespaceName
+    {
+        get
+        {
+            var host = FullyQualifiedNamespace.Split(':')[0];
+            if (IsEmulator)
+            {
+                return $"{host} (emulator)";
+            }
+
+            var dot = host.IndexOf('.');
+            return dot > 0 ? host[..dot] : host;
+        }
+    }
+
     /// <summary>Port the local emulator serves management operations on.</summary>
     public const int EmulatorManagementPort = 5300;
 

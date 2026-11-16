@@ -12,7 +12,7 @@ public sealed class DialogService(Window owner) : IDialogService
 {
     public async Task<ConnectionProfile?> AddConnectionAsync()
     {
-        var name = new TextBox { PlaceholderText = "e.g. Production orders" };
+        var name = new TextBox { PlaceholderText = "Filled in from the connection string" };
         var connectionString = new TextBox
         {
             PlaceholderText = "Endpoint=sb://<namespace>.servicebus.windows.net/;SharedAccessKeyName=…;SharedAccessKey=…",
@@ -22,13 +22,31 @@ public sealed class DialogService(Window owner) : IDialogService
         reveal.IsCheckedChanged += (_, _) => connectionString.RevealPassword = reveal.IsChecked == true;
         var error = ErrorText();
 
+        // Default the display name to the namespace name, but never overwrite a name the user typed.
+        string? autoName = null;
+        connectionString.TextChanged += (_, _) =>
+        {
+            error.IsVisible = false;
+            if (!ConnectionStringInfo.TryParse(connectionString.Text, out var parsed, out _))
+            {
+                return;
+            }
+
+            var userEdited = !string.IsNullOrWhiteSpace(name.Text) && name.Text != autoName;
+            if (!userEdited)
+            {
+                autoName = parsed!.NamespaceName;
+                name.Text = autoName;
+            }
+        };
+
         ConnectionProfile? result = null;
         var dialog = BuildDialog("Add connection", 560, out var ok, out var body, "Add");
-        body.Children.Add(Label("Display name"));
-        body.Children.Add(name);
         body.Children.Add(Label("Connection string"));
         body.Children.Add(connectionString);
         body.Children.Add(reveal);
+        body.Children.Add(Label("Display name"));
+        body.Children.Add(name);
         body.Children.Add(Muted("Stored in your operating system's secure storage (DPAPI / Keychain / libsecret)."));
         body.Children.Add(error);
 
@@ -43,7 +61,7 @@ public sealed class DialogService(Window owner) : IDialogService
 
             result = new ConnectionProfile
             {
-                Name = string.IsNullOrWhiteSpace(name.Text) ? info!.FullyQualifiedNamespace : name.Text.Trim(),
+                Name = string.IsNullOrWhiteSpace(name.Text) ? info!.NamespaceName : name.Text.Trim(),
                 ConnectionString = connectionString.Text!.Trim(),
             };
             dialog.Close();

@@ -33,6 +33,16 @@ public class EmulatorConnectionStringTests
     {
         Assert.True(ConnectionStringInfo.TryParse(Emulator, out var info, out _));
         Assert.True(info!.IsEmulator);
+        Assert.Equal("localhost (emulator)", info.NamespaceName);
+    }
+
+    [Theory]
+    [InlineData("Endpoint=sb://contoso-prod.servicebus.windows.net/;SharedAccessKeyName=k;SharedAccessKey=v", "contoso-prod")]
+    [InlineData("Endpoint=sb://orders.servicebus.usgovcloudapi.net/;SharedAccessKeyName=k;SharedAccessKey=v;EntityPath=q", "orders")]
+    public void Extracts_namespace_name(string cs, string expected)
+    {
+        Assert.True(ConnectionStringInfo.TryParse(cs, out var info, out _));
+        Assert.Equal(expected, info!.NamespaceName);
     }
 }
 
