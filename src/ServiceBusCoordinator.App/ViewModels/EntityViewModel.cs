@@ -31,6 +31,7 @@ public sealed partial class EntityViewModel : ObservableObject
         _node = node;
         _dialogs = dialogs;
         SelectedSource = SourceOptions[0];
+        SelectedTabIndex = Entity.HasMessages ? 0 : 1;
         _ready = true;
     }
 
@@ -41,6 +42,85 @@ public sealed partial class EntityViewModel : ObservableObject
     public string Title => Entity.Kind == EntityKind.Subscription ? $"{Entity.TopicName} / {Entity.Name}" : Entity.Name;
 
     public string KindLabel => Entity.Kind + (Entity.IsManual ? " (added manually)" : "") + (Entity.RequiresSession ? " · sessions" : "");
+
+    public bool HasMessages => Entity.HasMessages;
+
+    public string KindName => Entity.Kind.ToString();
+
+    public Avalonia.Media.Geometry Icon => Entity.Kind switch
+    {
+        EntityKind.Queue => Icons.Queue,
+        EntityKind.Topic => Icons.Topic,
+        _ => Icons.Subscription,
+    };
+
+    public bool IsQueue => Entity.Kind == EntityKind.Queue;
+
+    public bool IsTopic => Entity.Kind == EntityKind.Topic;
+
+    public bool IsSubscription => Entity.Kind == EntityKind.Subscription;
+
+    public bool RequiresSession => Entity.RequiresSession;
+
+    public bool IsManual => Entity.IsManual;
+
+    /// <summary>Path shown under the title, e.g. <c>events/subscriptions/audit</c>.</summary>
+    public string PathText => _node.Namespace.Host is { } host ? $"{host} / {Entity.Path}" : Entity.Path;
+
+    public bool HasCounts => HasMessages && Entity.Counts is not null;
+
+    public string ActiveCount => Entity.Counts?.Active.ToString("N0") ?? "—";
+
+    public string DeadLetterCount => Entity.Counts?.DeadLetter.ToString("N0") ?? "—";
+
+    public bool HasDeadLetters => Entity.Counts?.DeadLetter > 0;
+
+    public string ScheduledCount => Entity.Counts?.Scheduled.ToString("N0") ?? "—";
+
+    public string TransferDeadLetterCount => Entity.Counts?.TransferDeadLetter.ToString("N0") ?? "—";
+
+    // ----------------------------------------------------------------- Properties tab
+
+    [ObservableProperty]
+    public partial int SelectedTabIndex { get; set; }
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DetailGroups), nameof(Rules), nameof(HasRules))]
+    public partial EntityDetails? Details { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsLoadingDetails { get; set; }
+
+    [ObservableProperty]
+    public partial string? DetailsMessage { get; set; }
+
+    public IReadOnlyList<DetailGroup> DetailGroups => Details?.Groups ?? [];
+
+    public IReadOnlyList<RuleDetails> Rules => Details?.Rules ?? [];
+
+    public bool HasRules => IsSubscription && Details is not null;
+
+    private async Task LoadDetailsAsync()
+    {
+        IsLoadingDetails = true;
+        DetailsMessage = null;
+        try
+        {
+            Details = await Connection.GetDetailsAsync(Entity);
+            if (Details is null)
+            {
+                DetailsMessage = "Properties need a connection string with Manage rights.";
+            }
+        }
+        catch (Exception ex)
+        {
+            DetailsMessage = "Could not load properties: " + SecretScrubber.Scrub(ex.Message);
+        }
+        finally
+        {
+            IsLoadingDetails = false;
+        }
+    }
 
     public string CountsText => Entity.Counts is { } c
         ? $"Active {c.Active:N0}   ·   Dead-letter {c.DeadLetter:N0}   ·   Transfer DLQ {c.TransferDeadLetter:N0}"
@@ -164,12 +244,20 @@ public sealed partial class EntityViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(NotBusy))]
     public async Task RefreshAsync()
     {
+        var details = LoadDetailsAsync();
+        if (!HasMessages)
+        {
+            await details;
+            return;
+        }
+
         _loaded.Clear();
         Messages.Clear();
         SelectedMessage = null;
         CanLoadMore = false;
         await RefreshCountsAsync();
         await LoadPageAsync(fromSequenceNumber: null);
+        await details;
     }
 
     [RelayCommand(CanExecute = nameof(CanLoadMoreNow))]
@@ -337,6 +425,12 @@ public sealed partial class EntityViewModel : ObservableObject
             _node.Entity = await Connection.RefreshAsync(_node.Entity);
             OnPropertyChanged(nameof(Entity));
             OnPropertyChanged(nameof(CountsText));
+            OnPropertyChanged(nameof(HasCounts));
+            OnPropertyChanged(nameof(ActiveCount));
+            OnPropertyChanged(nameof(DeadLetterCount));
+            OnPropertyChanged(nameof(HasDeadLetters));
+            OnPropertyChanged(nameof(ScheduledCount));
+            OnPropertyChanged(nameof(TransferDeadLetterCount));
         }
         catch (Exception)
         {

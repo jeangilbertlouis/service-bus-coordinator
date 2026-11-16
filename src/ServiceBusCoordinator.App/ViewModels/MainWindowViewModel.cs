@@ -13,7 +13,11 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     private readonly IDialogService _dialogs;
     private ConnectionRepository _repository = new(new InMemorySecretStore());
 
-    public MainWindowViewModel(IDialogService dialogs) => _dialogs = dialogs;
+    public MainWindowViewModel(IDialogService dialogs)
+    {
+        _dialogs = dialogs;
+        Namespaces.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoConnections));
+    }
 
     public ObservableCollection<NamespaceNodeViewModel> Namespaces { get; } = [];
 
@@ -29,6 +33,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     public partial EntityViewModel? CurrentEntity { get; set; }
 
     public bool HasEntity => CurrentEntity is not null;
+
+    public bool HasNoConnections => Namespaces.Count == 0;
+
+    public string AppVersion { get; } = typeof(MainWindowViewModel).Assembly
+        .GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+        .OfType<System.Reflection.AssemblyInformationalVersionAttribute>()
+        .FirstOrDefault()?.InformationalVersion.Split('+')[0] ?? "";
 
     [ObservableProperty]
     public partial string? StorageWarning { get; set; }
@@ -67,7 +78,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     partial void OnSelectedNodeChanged(TreeNodeViewModel? value)
     {
-        if (value is EntityNodeViewModel { Entity.HasMessages: true } entityNode)
+        if (value is EntityNodeViewModel entityNode)
         {
             CurrentEntity = new EntityViewModel(entityNode, _dialogs);
             _ = CurrentEntity.RefreshAsync();

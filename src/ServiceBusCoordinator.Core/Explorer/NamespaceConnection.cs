@@ -94,6 +94,47 @@ public sealed class NamespaceConnection : IAsyncDisposable
         }
     }
 
+    /// <summary>Configuration + runtime details (and rules, for subscriptions). Null when the connection lacks Manage rights.</summary>
+    public async Task<EntityDetails?> GetDetailsAsync(EntityInfo entity, CancellationToken ct = default)
+    {
+        try
+        {
+            switch (entity.Kind)
+            {
+                case EntityKind.Queue:
+                {
+                    var props = _admin.GetQueueAsync(entity.Name, ct);
+                    var runtime = _admin.GetQueueRuntimePropertiesAsync(entity.Name, ct);
+                    return EntityDetails.FromQueue((await props).Value, (await runtime).Value);
+                }
+
+                case EntityKind.Topic:
+                {
+                    var props = _admin.GetTopicAsync(entity.Name, ct);
+                    var runtime = _admin.GetTopicRuntimePropertiesAsync(entity.Name, ct);
+                    return EntityDetails.FromTopic((await props).Value, (await runtime).Value);
+                }
+
+                default:
+                {
+                    var props = _admin.GetSubscriptionAsync(entity.TopicName, entity.Name, ct);
+                    var runtime = _admin.GetSubscriptionRuntimePropertiesAsync(entity.TopicName, entity.Name, ct);
+                    var rules = new List<RuleProperties>();
+                    await foreach (var rule in _admin.GetRulesAsync(entity.TopicName, entity.Name, ct))
+                    {
+                        rules.Add(rule);
+                    }
+
+                    return EntityDetails.FromSubscription((await props).Value, (await runtime).Value, rules);
+                }
+            }
+        }
+        catch (Exception ex) when (IsAuthorizationFailure(ex))
+        {
+            return null;
+        }
+    }
+
     private async Task<IReadOnlyList<EntityInfo>> LoadSubscriptionsAsync(string topic, CancellationToken ct)
     {
         var subProps = new Dictionary<string, SubscriptionProperties>(StringComparer.OrdinalIgnoreCase);

@@ -156,6 +156,28 @@ ServiceBusCoordinator.sln
   `xattr -dr com.apple.quarantine "Service Bus Coordinator.app"` or right-click → Open). Signed installers are a
   future improvement.
 
+### 3.14 Entity properties (post-phase 5)
+* Every queue, topic and subscription has a **Properties** tab (topics are now selectable and show only this tab).
+* Read-only, grouped into cards: *General* (status, created/updated/accessed, size, max size, max message size,
+  partitioning, batching, user metadata), *Message counts*, *Message handling* (lock duration, max delivery count,
+  default TTL, sessions, duplicate detection + window, auto-delete on idle), *Dead-lettering & forwarding*, and
+  *Shared access policies* (names and rights only — keys are never shown).
+* Subscriptions also list their **rules**: filter kind (SQL / Correlation / All / None), the filter in readable form,
+  and the SQL action if any.
+* "Never" is shown for `TimeSpan.MaxValue`; sizes and durations are humanised.
+* Needs Manage rights; otherwise the tab explains that.
+
+### 3.15 Visual design
+* Fluent theme with an Azure-blue accent and a matching set of light/dark brushes (`App.axaml` theme dictionaries),
+  following the OS light/dark setting.
+* Sidebar with app header, primary *Add connection* button, icon buttons, and a tree with per-kind icons and colours
+  (queue blue, topic purple, subscription teal), count pills and red *DLQ n* pills; namespaces show their host,
+  an *emulator* / *limited* / *error* pill, and the namespace-wide dead-letter total.
+* Entity header with icon, kind and session pills, full path, and stat tiles (the dead-letter tile turns red when
+  non-zero). Toolbar actions are grouped with dividers and icons; the message list is a card with a header row and
+  zebra rows; a status bar shows progress and the app version.
+* Icons are small vector paths in `Icons.cs` (no icon font or image assets).
+
 ## 4. Security
 * Connection strings only live in memory and in the OS secret store.
 * Connection strings are never logged; error messages are scrubbed of `SharedAccessKey=…`.
@@ -190,10 +212,12 @@ ServiceBusCoordinator.sln
 * **Message templates** for the send dialog.
 * **Import** an exported JSON file to replay messages into another entity or namespace.
 * **Server-side search** (beyond the loaded messages), e.g. scanning a whole DLQ for a property value.
-* **Entity management**: create/delete/edit queues, topics, subscriptions and rules.
+* **Entity management**: create/delete queues, topics and subscriptions; edit the properties shown in the
+  Properties tab; add/edit/remove subscription rules.
+* **Manual theme switch** (light / dark / system) in addition to following the OS.
 * **Auto-refresh** counts with a configurable interval; alerts when DLQ count crosses a threshold.
 * **Audit log** of destructive operations (local file).
-* **Dark/light theme toggle** and saved layout.
+* **Saved layout** (sidebar width, splitter positions).
 * **Signed installers**: MSIX/winget (Windows), notarised DMG (macOS), AppImage/Flatpak (Linux); app icon; auto-update.
 * **Trimmed builds** to shrink the ~45 MB packages (needs Avalonia/SDK trimming annotations to be verified).
 * **CLI companion** reusing `ServiceBusCoordinator.Core` for scripted purge/resubmit.

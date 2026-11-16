@@ -61,6 +61,8 @@ Use this connection string in the app or for `SBC_TEST_CONNECTION`:
 - **Peek messages** (non-destructive) on the active queue or the dead-letter queue, with paging, a formatted body
   (JSON / XML / text / hex) and all system and application properties.
 - **Purge** the active queue or the dead-letter queue, with confirmation, progress and cancel.
+- **Entity properties**: configuration, runtime details and access policies for queues, topics and subscriptions, plus subscription rules and filters.
+- **Light and dark themes** that follow your OS.
 - **Sub-queues**: active, dead-letter and transfer dead-letter.
 - **Sessions**: browse session-enabled entities one session at a time, find sessions, and view or clear session state.
 - **Scheduled and deferred messages**: shown with their state. You can cancel scheduled messages or delete deferred ones; purge removes both.
