@@ -8,7 +8,7 @@
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <AssemblyName>ServiceBusCoordinator</AssemblyName>
-    <Version>0.5.0</Version>
+    <Version>0.6.0</Version>
     <Product>Service Bus Coordinator</Product>
     <Description>Cross-platform explorer for Azure Service Bus.</Description>
   </PropertyGroup>
