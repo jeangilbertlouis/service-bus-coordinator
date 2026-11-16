@@ -3,6 +3,8 @@
 A cross-platform desktop app (Windows, macOS, Linux) for exploring and operating on
 Azure Service Bus namespaces.
 
+For building, testing and extending the app, see [DEVELOPMENT.md](DEVELOPMENT.md).
+
 ## 1. Goals
 
 | Requirement | Summary |

@@ -1,83 +1,75 @@
 # Service Bus Coordinator
 
-A cross-platform desktop app (Windows, macOS, Linux) for exploring Azure Service Bus namespaces:
-browse queues, topics and subscriptions across several namespaces, peek messages, purge, and move
-dead-lettered messages back to their main entity.
+A free desktop app for Windows, macOS and Linux to look inside your Azure Service Bus namespaces: browse queues, topics
+and subscriptions, read messages, clear out queues, and send dead-lettered messages back to where they came from.
 
-Built with .NET 10 and Avalonia UI. See [docs/DESIGN.md](docs/DESIGN.md) for the design, decisions, phases and future improvements.
+## What you can do
 
-## Run
+- **Connect to several namespaces at once** by pasting a connection string. Connection strings are kept in your
+  operating system's secure storage, never in a plain file.
+- **Browse queues, topics and subscriptions** with live message counts and a clear warning when dead-letter messages
+  pile up.
+- **Read messages** without removing them, with a formatted body (JSON, XML, text) and all their properties.
+- **Fix dead-lettered messages**: resubmit some or all of them to the original queue or topic, or to another one.
+- **Purge** a queue or its dead-letter queue, with confirmation, progress and cancel.
+- **Send** new messages, or edit and resend an existing one.
+- **Filter and export** messages to JSON.
+- **See entity settings**: lock duration, time-to-live, forwarding, subscription rules and more.
+- Works with **sessions**, **scheduled and deferred messages**, and the **local Service Bus emulator**.
+- Light and dark themes that follow your OS.
+
+## Install
+
+1. Open the [latest release](https://github.com/jeangilbertlouis/service-bus-coordinator/releases/latest).
+2. Download the file for your system:
+
+   | System | File |
+   |---|---|
+   | Windows | `…-win-x64.zip` |
+   | macOS (Apple silicon) | `…-osx-arm64.zip` |
+   | macOS (Intel) | `…-osx-x64.zip` |
+   | Linux | `…-linux-x64.tar.gz` |
+
+3. Unpack it and start **ServiceBusCoordinator** (on macOS, **Service Bus Coordinator.app**). No .NET install is needed.
+
+The app is not code-signed yet, so the first launch shows a warning:
+
+- **Windows:** on the SmartScreen prompt, choose **More info → Run anyway**.
+- **macOS:** right-click the app, choose **Open**, then confirm.
+- **Linux:** you may need to make the file executable (`chmod +x ServiceBusCoordinator`). Secure storage needs
+  `libsecret`, which most desktop distributions already include.
+
+## Get started
+
+1. Click **Add connection** and paste a Service Bus connection string. You can find it in the Azure portal under your
+   namespace → **Shared access policies**. The name fills in automatically.
+2. Pick a queue or subscription in the tree to see its messages. Switch to **Dead-letter** to see failed messages.
+3. Tick messages and choose **Resubmit**, or use **Purge** to clear the list. Both ask before changing anything.
+
+### Which connection string should I use?
+
+| Rights | What works |
+|---|---|
+| **Manage** | Everything: the full tree, counts, entity settings |
+| **Listen** / **Send** only | Messages and operations, but you add queues or subscriptions by name with the **add entity** button next to **Add connection** |
+
+Resubmit and purge change real data. Try them on a test namespace or the
+[local emulator](docs/DEVELOPMENT.md#local-emulator-optional) first.
+
+## For developers
+
+Service Bus Coordinator is built with .NET 10 and [Avalonia UI](https://avaloniaui.net/). To run it from source:
 
 ```bash
 dotnet run --project src/ServiceBusCoordinator.App
 ```
 
-## Package
+- [Developer guide](docs/DEVELOPMENT.md): building, testing, packaging, the emulator, the code layout, and how to add
+  features.
+- [Design document](docs/DESIGN.md): architecture, decisions, and the roadmap of future improvements.
 
-Self-contained single-file builds; output goes to `artifacts/`:
+Contributions are welcome. See [Contributing](docs/DEVELOPMENT.md#contributing).
 
-```bash
-powershell -File build/publish.ps1 -Runtime win-x64
-```
+## License
 
-```bash
-bash build/publish.sh linux-x64
-```
-
-```bash
-bash build/publish.sh osx-arm64
-```
-
-CI (`.github/workflows/ci.yml`) builds all of these on every push. Pushing a tag like `v0.5.0` publishes a GitHub release.
-The packages are unsigned, so expect a SmartScreen or Gatekeeper prompt on first launch.
-
-## Test
-
-```bash
-dotnet test
-```
-
-Integration tests are skipped unless `SBC_TEST_CONNECTION` is set to a connection string with Manage rights.
-
-### Local emulator (optional)
-
-`emulator/` contains a Docker Compose setup for the Azure Service Bus emulator, with sample queues
-(`orders`, `orders-sessions`) and a topic (`events` → `audit`, `billing`). Copy `emulator/.env.example`
-to `emulator/.env`, review and accept the EULAs, and set a local SQL password. Then run:
-
-```bash
-docker compose -f emulator/docker-compose.yaml up -d
-```
-
-Use this connection string in the app or for `SBC_TEST_CONNECTION`:
-`Endpoint=sb://localhost;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;`
-
-## Features
-
-- **Multiple namespaces**: add as many connections as you like. Connection strings are kept in OS secure storage
-  (DPAPI on Windows, Keychain on macOS, libsecret on Linux).
-- **Entity tree** with active / dead-letter counts. Needs a connection string with **Manage** rights; without it,
-  add queues or subscriptions by name with **+ Entity**.
-- **Peek messages** (non-destructive) on the active queue or the dead-letter queue, with paging, a formatted body
-  (JSON / XML / text / hex) and all system and application properties.
-- **Purge** the active queue or the dead-letter queue, with confirmation, progress and cancel.
-- **Entity properties**: configuration, runtime details and access policies for queues, topics and subscriptions, plus subscription rules and filters.
-- **Light and dark themes** that follow your OS.
-- **Sub-queues**: active, dead-letter and transfer dead-letter.
-- **Sessions**: browse session-enabled entities one session at a time, find sessions, and view or clear session state.
-- **Scheduled and deferred messages**: shown with their state. You can cancel scheduled messages or delete deferred ones; purge removes both.
-- **Throttling**: bulk operations wait and retry when the namespace is busy, instead of failing.
-- **Filter** loaded messages by any text, sequence number or `property=value`.
-- **Export** ticked, shown, or all messages (up to 10,000) to JSON.
-- **Send** new messages or **edit & resend** an existing one, with properties, session ID, TTL and scheduling.
-- **Resubmit** selected or all dead-lettered messages to the original queue or topic, or to another entity.
-  Uses a transaction when the service allows it. Warns when resubmitting to a topic, because the message will go to every matching subscription.
-
-## Layout
-
-```
-src/ServiceBusCoordinator.Core   Azure SDK logic (no UI)
-src/ServiceBusCoordinator.App    Avalonia desktop app (MVVM)
-tests/ServiceBusCoordinator.Core.Tests
-docs/DESIGN.md                   Design, decisions, roadmap
-```
+[MIT](LICENSE). Not affiliated with or endorsed by Microsoft.
