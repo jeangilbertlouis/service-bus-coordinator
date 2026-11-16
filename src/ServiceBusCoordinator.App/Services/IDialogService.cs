@@ -7,6 +7,9 @@ namespace ServiceBusCoordinator.App.Services;
 /// <summary>What the user chose in the resubmit dialog.</summary>
 public sealed record ResubmitChoice(string TargetEntityPath, bool StripDeadLetterProperties, bool StampResubmitHeaders);
 
+/// <summary>A message composed in the send dialog, and where to send it.</summary>
+public sealed record ComposedMessage(string TargetEntityPath, OutgoingMessage Message);
+
 public interface IDialogService
 {
     Task<ConnectionProfile?> AddConnectionAsync();
@@ -17,6 +20,11 @@ public interface IDialogService
     Task<bool> ConfirmAsync(string title, string message, string confirmLabel, string? typeToConfirm = null);
 
     Task<ResubmitChoice?> ChooseResubmitAsync(EntityInfo source, MessageSource subQueue, string scopeDescription, IReadOnlyList<EntityInfo> targets);
+
+    Task<ComposedMessage?> ComposeMessageAsync(string title, string defaultTarget, IReadOnlyList<EntityInfo> targets, OutgoingMessage? prefill);
+
+    /// <summary>Shows a save-file picker for a JSON file. Returns a writable stream, or null when cancelled.</summary>
+    Task<Stream?> SaveJsonFileAsync(string title, string suggestedFileName);
 
     Task ShowMessageAsync(string title, string message);
 }

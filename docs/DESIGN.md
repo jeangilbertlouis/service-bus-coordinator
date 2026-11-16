@@ -122,6 +122,40 @@ ServiceBusCoordinator.sln
 * A connection string with `UseDevelopmentEmulator=true` is accepted as-is. The emulator serves management
   operations on port **5300**, so the app adds that port for the administration client automatically.
 
+### 3.10 Search & filter (phase 5)
+* A filter box above the message list narrows the **loaded** messages as you type (client-side; "Load more"
+  results are filtered too). Matches message ID, subject, correlation/session ID, content type, dead-letter
+  reason/description, application property names and values, and the body text (case-insensitive).
+* `name=value` matches only application property `name` containing `value`; a number also matches a sequence number.
+* Ticked messages stay ticked when hidden by the filter, so resubmit/export of "ticked" includes them.
+
+### 3.11 Export (phase 5)
+* **Export…** saves the ticked messages — or, if none are ticked, every message currently shown — to a JSON file.
+* **Export all…** peeks the whole sub-queue (or the open session) page by page, up to 10,000 messages, then saves it.
+* Format (`formatVersion: 1`): `{ source, exportedAt, messages: [...] }`; each message has its system properties,
+  `applicationProperties`, and `body` as UTF-8 text (`bodyEncoding: "utf-8"`) or base64 (`"base64"`) for binary.
+  Unset fields are omitted.
+
+### 3.12 Send & edit-and-resend (phase 5)
+* **Send…** composes a new message: target (defaults to the queue, or the subscription's topic), body, content type,
+  subject, message/correlation/session ID, To, ReplyTo, time to live, an optional schedule (minutes from now), and
+  application properties as `name=value` lines (typed: `true/false`, whole numbers, decimals, `"quoted"` strings).
+* **Edit & resend…** pre-fills the dialog from the selected message, with a **new message ID** (so duplicate detection
+  doesn't drop it) and without the dead-letter reason properties.
+* A blank message ID gets a generated GUID (the SDK rejects an empty one).
+
+### 3.13 Packaging & CI (phase 5)
+* `build/publish.ps1` (Windows) and `build/publish.sh` (macOS/Linux) publish a **self-contained single-file** app
+  per runtime and strip the ~100 MB of native debug symbols:
+  * `win-x64` → `.zip` with `ServiceBusCoordinator.exe` (~45 MB)
+  * `linux-x64` → `.tar.gz` with the `ServiceBusCoordinator` executable (~44 MB)
+  * `osx-arm64` / `osx-x64` → `.zip` with `Service Bus Coordinator.app` (bundle built from `build/macos/Info.plist`)
+* `.github/workflows/ci.yml` tests and packages on Windows, Linux and macOS for every push and PR, uploading the
+  packages as workflow artifacts. Pushing a `v*` tag (e.g. `v0.5.0`) also creates a GitHub release with them attached.
+* Packages are **unsigned**: Windows SmartScreen and macOS Gatekeeper will warn on first launch (on macOS run
+  `xattr -dr com.apple.quarantine "Service Bus Coordinator.app"` or right-click → Open). Signed installers are a
+  future improvement.
+
 ## 4. Security
 * Connection strings only live in memory and in the OS secret store.
 * Connection strings are never logged; error messages are scrubbed of `SharedAccessKey=…`.
@@ -143,7 +177,7 @@ ServiceBusCoordinator.sln
 | 2. Viewer | Peek with paging, Active/DLQ toggle, message detail pane | Built — needs live-namespace testing |
 | 3. Operations | Purge (confirm + progress + cancel), DLQ resubmit (selected/all, transactional, topic warning, target picker) | Built — needs live-namespace testing |
 | 4. Edge cases | Session-enabled entities (peek/purge per session, find sessions, session state), transfer DLQ, scheduled & deferred messages, throttling/back-off on bulk ops, emulator support | Built — integration tests written, not yet run against a live namespace |
-| 5. Polish | Search/filter, export, send test message, installers per OS | Planned |
+| 5. Polish | Search/filter, export to JSON, send / edit & resend, self-contained packages per OS, CI + tagged releases | Built — unit tests pass, Windows/Linux packages built locally; dialogs and macOS packaging not yet exercised end to end |
 
 ## 7. Future improvements
 * **Entra ID authentication** (`DefaultAzureCredential` / `az login`) alongside connection strings.
@@ -153,12 +187,13 @@ ServiceBusCoordinator.sln
 * **Filtered resubmit/purge**: by dead-letter reason, enqueued time window, property match, or body text.
 * **Targeted topic resubmit**: stamp a property and create/verify a matching subscription rule so a resubmitted
   message reaches only its original subscription.
-* **Send / edit & resend** messages (with templates).
-* **Export / import** messages to JSON files for backup or replay between namespaces.
-* **Search** across message bodies and properties in the loaded page.
+* **Message templates** for the send dialog.
+* **Import** an exported JSON file to replay messages into another entity or namespace.
+* **Server-side search** (beyond the loaded messages), e.g. scanning a whole DLQ for a property value.
 * **Entity management**: create/delete/edit queues, topics, subscriptions and rules.
 * **Auto-refresh** counts with a configurable interval; alerts when DLQ count crosses a threshold.
 * **Audit log** of destructive operations (local file).
 * **Dark/light theme toggle** and saved layout.
-* **Packaging**: MSIX/winget (Windows), notarised `.app`/DMG (macOS), AppImage/Flatpak (Linux); auto-update.
+* **Signed installers**: MSIX/winget (Windows), notarised DMG (macOS), AppImage/Flatpak (Linux); app icon; auto-update.
+* **Trimmed builds** to shrink the ~45 MB packages (needs Avalonia/SDK trimming annotations to be verified).
 * **CLI companion** reusing `ServiceBusCoordinator.Core` for scripted purge/resubmit.

@@ -54,7 +54,11 @@ public sealed partial class EntityViewModel : ObservableObject
         new(MessageSource.TransferDeadLetter, "Transfer dead-letter"),
     ];
 
+    /// <summary>Messages shown (after the filter).</summary>
     public ObservableCollection<MessageRowViewModel> Messages { get; } = [];
+
+    /// <summary>Every message loaded so far, before filtering.</summary>
+    private readonly List<MessageRowViewModel> _loaded = [];
 
     public ObservableCollection<SessionSummary> Sessions { get; } = [];
 
@@ -92,8 +96,20 @@ public sealed partial class EntityViewModel : ObservableObject
     [NotifyCanExecuteChangedFor(
         nameof(RefreshCommand), nameof(LoadMoreCommand), nameof(PurgeCommand), nameof(ResubmitSelectedCommand), nameof(ResubmitAllCommand),
         nameof(CancelScheduledCommand), nameof(DeleteDeferredCommand), nameof(FindSessionsCommand), nameof(OpenSessionCommand),
-        nameof(NextSessionCommand), nameof(ClearSessionStateCommand))]
+        nameof(NextSessionCommand), nameof(ClearSessionStateCommand), nameof(ExportCommand), nameof(ExportAllCommand),
+        nameof(SendMessageCommand), nameof(ResendCommand))]
     public partial bool IsBusy { get; set; }
+
+    /// <summary>Filters the loaded messages (client-side). See <see cref="MessageFilter"/> for the syntax.</summary>
+    [ObservableProperty]
+    public partial string? FilterText { get; set; }
+
+    [ObservableProperty]
+    public partial string? FilterSummary { get; set; }
+
+    partial void OnFilterTextChanged(string? value) => ApplyFilter();
+
+    partial void OnSelectedMessageChanged(MessageRowViewModel? value) => ResendCommand.NotifyCanExecuteChanged();
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(LoadMoreCommand))]
@@ -148,6 +164,7 @@ public sealed partial class EntityViewModel : ObservableObject
     [RelayCommand(CanExecute = nameof(NotBusy))]
     public async Task RefreshAsync()
     {
+        _loaded.Clear();
         Messages.Clear();
         SelectedMessage = null;
         CanLoadMore = false;
@@ -156,7 +173,7 @@ public sealed partial class EntityViewModel : ObservableObject
     }
 
     [RelayCommand(CanExecute = nameof(CanLoadMoreNow))]
-    private Task LoadMoreAsync() => LoadPageAsync(Messages.Count == 0 ? null : Messages[^1].SequenceNumber + 1);
+    private Task LoadMoreAsync() => LoadPageAsync(_loaded.Count == 0 ? null : _loaded[^1].SequenceNumber + 1);
 
     [RelayCommand]
     private void Cancel() => _cts?.Cancel();
@@ -182,18 +199,136 @@ public sealed partial class EntityViewModel : ObservableObject
 
         foreach (var m in result.Messages)
         {
-            Messages.Add(new MessageRowViewModel(m));
+            var row = new MessageRowViewModel(m);
+            _loaded.Add(row);
+            if (MessageFilter.Matches(m, FilterText))
+            {
+                Messages.Add(row);
+            }
         }
 
         CanLoadMore = result.Messages.Count > 0;
-        StatusText = Messages.Count switch
+        StatusText = _loaded.Count switch
         {
             0 when IsSessionMode && result.SessionId is null => "No session with available messages was found.",
             0 => $"No {SubQueueLabel}.",
-            _ => $"Showing {Messages.Count:N0} peeked message(s)" + (IsSessionMode ? $" in session '{SessionId}'." : "."),
+            _ => $"Loaded {_loaded.Count:N0} peeked message(s)" + (IsSessionMode ? $" in session '{SessionId}'." : "."),
         };
+        UpdateFilterSummary();
         SelectedMessage ??= Messages.FirstOrDefault();
     });
+
+    private void ApplyFilter()
+    {
+        var selected = SelectedMessage;
+        Messages.Clear();
+        foreach (var row in _loaded.Where(r => MessageFilter.Matches(r.View, FilterText)))
+        {
+            Messages.Add(row);
+        }
+
+        SelectedMessage = selected is not null && Messages.Contains(selected) ? selected : Messages.FirstOrDefault();
+        UpdateFilterSummary();
+    }
+
+    private void UpdateFilterSummary() =>
+        FilterSummary = string.IsNullOrWhiteSpace(FilterText) ? null : $"{Messages.Count:N0} of {_loaded.Count:N0} loaded match";
+
+    // ----------------------------------------------------------------- Export
+
+    private const int ExportAllLimit = 10_000;
+
+    /// <summary>Exports the ticked messages, or every message currently shown when none are ticked.</summary>
+    [RelayCommand(CanExecute = nameof(NotBusy))]
+    private async Task ExportAsync()
+    {
+        var ticked = _loaded.Where(m => m.IsChecked).Select(m => m.View).ToList();
+        var messages = ticked.Count > 0 ? ticked : Messages.Select(m => m.View).ToList();
+        if (messages.Count == 0)
+        {
+            await _dialogs.ShowMessageAsync("Export", "There are no messages to export.");
+            return;
+        }
+
+        await ExportToFileAsync(messages, ticked.Count > 0 ? "selected" : "shown");
+    }
+
+    /// <summary>Peeks the whole sub-queue (or the open session) and exports it.</summary>
+    [RelayCommand(CanExecute = nameof(NotBusy))]
+    private async Task ExportAllAsync()
+    {
+        IReadOnlyList<MessageView>? all = null;
+        await RunAsync("Reading messages", async ct =>
+        {
+            all = await Connection.Messages.PeekAllAsync(
+                Entity, Source, IsSessionMode ? SessionId : null, ExportAllLimit, Progress("Reading", "read"), ct);
+        });
+
+        if (all is null)
+        {
+            return;
+        }
+
+        if (all.Count == 0)
+        {
+            await _dialogs.ShowMessageAsync("Export", $"The {SubQueueLabel} is empty.");
+            return;
+        }
+
+        await ExportToFileAsync(all, all.Count >= ExportAllLimit ? $"first {ExportAllLimit:N0}" : "all");
+    }
+
+    private async Task ExportToFileAsync(IReadOnlyList<MessageView> messages, string scope)
+    {
+        var sourcePath = Entity.Path + Source.PathSuffix();
+        var safeName = string.Concat(sourcePath.Select(c => char.IsLetterOrDigit(c) || c is '-' or '.' ? c : '_')).Trim('_');
+        var stream = await _dialogs.SaveJsonFileAsync("Export messages", $"{safeName}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+        if (stream is null)
+        {
+            return;
+        }
+
+        await RunAsync("Exporting", async ct =>
+        {
+            await using (stream)
+            {
+                await MessageExporter.ExportAsync(stream, sourcePath, messages, DateTimeOffset.UtcNow, ct);
+            }
+
+            StatusText = $"Exported {messages.Count:N0} message(s) ({scope}).";
+        });
+    }
+
+    // ----------------------------------------------------------------- Send
+
+    [RelayCommand(CanExecute = nameof(NotBusy))]
+    private Task SendMessageAsync() =>
+        ComposeAndSendAsync("Send message", new OutgoingMessage("", "application/json", SessionId: IsSessionMode ? SessionId : null));
+
+    [RelayCommand(CanExecute = nameof(CanResend))]
+    private Task ResendAsync() =>
+        ComposeAndSendAsync("Edit & resend message", OutgoingMessage.From(SelectedMessage!.View));
+
+    private bool CanResend => !IsBusy && SelectedMessage is not null;
+
+    private async Task ComposeAndSendAsync(string title, OutgoingMessage prefill)
+    {
+        var composed = await _dialogs.ComposeMessageAsync(
+            title, Entity.DefaultResubmitTarget ?? Entity.Path, _node.Namespace.SendableEntities, prefill);
+        if (composed is null)
+        {
+            return;
+        }
+
+        await RunAsync("Sending", async ct =>
+        {
+            var scheduled = await Connection.Messages.SendAsync(composed.TargetEntityPath, composed.Message, ct);
+            StatusText = scheduled is { } seq
+                ? $"Scheduled message #{seq} on '{composed.TargetEntityPath}' for {composed.Message.ScheduledEnqueueTime!.Value.ToLocalTime():g}."
+                : $"Sent message to '{composed.TargetEntityPath}'.";
+        });
+        await RefreshCountsAsync();
+    }
 
     private async Task RefreshCountsAsync()
     {
@@ -364,14 +499,14 @@ public sealed partial class EntityViewModel : ObservableObject
     }
 
     private List<long> CheckedWithState(ServiceBusMessageState state) =>
-        Messages.Where(m => m.IsChecked && m.View.State == state).Select(m => m.SequenceNumber).ToList();
+        _loaded.Where(m => m.IsChecked && m.View.State == state).Select(m => m.SequenceNumber).ToList();
 
     // ----------------------------------------------------------------- Resubmit
 
     [RelayCommand(CanExecute = nameof(CanResubmit))]
     private async Task ResubmitSelectedAsync()
     {
-        var selected = Messages.Where(m => m.IsChecked).Select(m => m.SequenceNumber).ToHashSet();
+        var selected = _loaded.Where(m => m.IsChecked).Select(m => m.SequenceNumber).ToHashSet();
         if (selected.Count == 0)
         {
             await _dialogs.ShowMessageAsync("Resubmit", "Tick the messages to resubmit first.");

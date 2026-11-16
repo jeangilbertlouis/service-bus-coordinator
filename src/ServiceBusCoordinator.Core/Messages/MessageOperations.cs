@@ -64,6 +64,52 @@ public sealed class MessageOperations
         return new PeekResult(messages.Select(MessageView.From).ToList(), null);
     }
 
+    /// <summary>Peeks a whole sub-queue (or one session) page by page, up to <paramref name="maxMessages"/>. Used for export.</summary>
+    public async Task<IReadOnlyList<MessageView>> PeekAllAsync(
+        EntityInfo entity, MessageSource source, string? sessionId, int maxMessages, IProgress<OperationProgress>? progress, CancellationToken ct = default)
+    {
+        var all = new List<MessageView>();
+        long? from = null;
+        while (all.Count < maxMessages)
+        {
+            var page = await Throttling.RunAsync(
+                c => PeekAsync(entity, source, from, Math.Min(SweepPageSize, maxMessages - all.Count), sessionId, c), null, ct);
+            if (page.Messages.Count == 0)
+            {
+                break;
+            }
+
+            // Pin the session after the first page so "next available" doesn't hop between sessions.
+            sessionId ??= page.SessionId;
+            all.AddRange(page.Messages);
+            from = page.Messages[^1].SequenceNumber + 1;
+            progress?.Report(new OperationProgress(all.Count));
+        }
+
+        return all;
+    }
+
+    // ----------------------------------------------------------------- Send
+
+    /// <summary>Sends (or schedules) a message. Returns the sequence number when scheduled, otherwise null.</summary>
+    public async Task<long?> SendAsync(string entityPath, OutgoingMessage outgoing, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(entityPath))
+        {
+            throw new ArgumentException("A target entity is required.", nameof(entityPath));
+        }
+
+        await using var sender = Client.CreateSender(entityPath);
+        var message = outgoing.ToServiceBusMessage();
+        if (outgoing.ScheduledEnqueueTime is { } at && at > DateTimeOffset.UtcNow)
+        {
+            return await sender.ScheduleMessageAsync(message, at, ct);
+        }
+
+        await sender.SendMessageAsync(message, ct);
+        return null;
+    }
+
     // ----------------------------------------------------------------- Sessions
 
     /// <summary>

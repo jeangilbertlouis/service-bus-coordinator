@@ -12,6 +12,25 @@ Built with .NET 10 and Avalonia UI. See [docs/DESIGN.md](docs/DESIGN.md) for the
 dotnet run --project src/ServiceBusCoordinator.App
 ```
 
+## Package
+
+Self-contained single-file builds; output goes to `artifacts/`:
+
+```bash
+powershell -File build/publish.ps1 -Runtime win-x64
+```
+
+```bash
+bash build/publish.sh linux-x64
+```
+
+```bash
+bash build/publish.sh osx-arm64
+```
+
+CI (`.github/workflows/ci.yml`) builds all of these on every push. Pushing a tag like `v0.5.0` publishes a GitHub release.
+The packages are unsigned, so expect a SmartScreen or Gatekeeper prompt on first launch.
+
 ## Test
 
 ```bash
@@ -46,6 +65,9 @@ Use this connection string in the app or for `SBC_TEST_CONNECTION`:
 - **Sessions**: browse session-enabled entities one session at a time, find sessions, and view or clear session state.
 - **Scheduled and deferred messages**: shown with their state. You can cancel scheduled messages or delete deferred ones; purge removes both.
 - **Throttling**: bulk operations wait and retry when the namespace is busy, instead of failing.
+- **Filter** loaded messages by any text, sequence number or `property=value`.
+- **Export** ticked, shown, or all messages (up to 10,000) to JSON.
+- **Send** new messages or **edit & resend** an existing one, with properties, session ID, TTL and scheduling.
 - **Resubmit** selected or all dead-lettered messages to the original queue or topic, or to another entity.
   Uses a transaction when the service allows it. Warns when resubmitting to a topic, because the message will go to every matching subscription.
 

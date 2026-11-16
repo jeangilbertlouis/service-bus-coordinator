@@ -195,6 +195,35 @@ public sealed class IntegrationTests : IAsyncLifetime
         Assert.Empty(await Connection.Messages.ListSessionsAsync(queue));
     }
 
+    [IntegrationFact]
+    public async Task Sends_and_schedules_composed_messages()
+    {
+        var queue = await CreateQueueAsync();
+        var props = OutgoingMessage.ParseProperties("tenant=acme\ncount=3");
+
+        Assert.Null(await Connection.Messages.SendAsync(queue.Name, new OutgoingMessage("{\"a\":1}", "application/json", "s", ApplicationProperties: props)));
+        var seq = await Connection.Messages.SendAsync(queue.Name, new OutgoingMessage("later", ScheduledEnqueueTime: DateTimeOffset.UtcNow.AddMinutes(30)));
+        Assert.NotNull(seq);
+
+        var peeked = (await Connection.Messages.PeekAsync(queue, MessageSource.Active, null, 10)).Messages;
+        var sent = Assert.Single(peeked, m => m.State == ServiceBusMessageState.Active);
+        Assert.Equal("s", sent.Subject);
+        Assert.Equal(3L, sent.ApplicationProperties["count"]);
+        Assert.Contains(peeked, m => m.State == ServiceBusMessageState.Scheduled && m.SequenceNumber == seq);
+    }
+
+    [IntegrationFact]
+    public async Task Peek_all_reads_every_page()
+    {
+        var queue = await CreateQueueAsync();
+        await SendAsync(queue, 300);
+
+        var all = await Connection.Messages.PeekAllAsync(queue, MessageSource.Active, null, 10_000, null);
+
+        Assert.Equal(300, all.Count);
+        Assert.Equal(300, all.Select(m => m.SequenceNumber).Distinct().Count());
+    }
+
     private async Task<EntityInfo> CreateQueueAsync(bool requiresSession = false)
     {
         var name = "sbc-test-" + Guid.NewGuid().ToString("N")[..10];

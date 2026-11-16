@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
 using ServiceBusCoordinator.Core.Connections;
+using ServiceBusCoordinator.Core.Messages;
 using ServiceBusCoordinator.Core.Models;
 
 namespace ServiceBusCoordinator.App.Services;
@@ -198,6 +199,157 @@ public sealed class DialogService(Window owner) : IDialogService
 
         await dialog.ShowDialog(owner);
         return result;
+    }
+
+    public async Task<ComposedMessage?> ComposeMessageAsync(
+        string title, string defaultTarget, IReadOnlyList<EntityInfo> targets, OutgoingMessage? prefill)
+    {
+        var targetNames = targets.Select(t => t.Path).ToList();
+        if (!targetNames.Contains(defaultTarget, StringComparer.OrdinalIgnoreCase))
+        {
+            targetNames.Insert(0, defaultTarget);
+        }
+
+        var target = new ComboBox { ItemsSource = targetNames, SelectedItem = defaultTarget, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var body = new TextBox
+        {
+            Text = prefill?.Body ?? "",
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.NoWrap,
+            Height = 160,
+            FontFamily = new FontFamily("Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace"),
+            FontSize = 12,
+        };
+        var contentType = new TextBox { Text = prefill?.ContentType ?? "application/json" };
+        var subject = new TextBox { Text = prefill?.Subject };
+        var messageId = new TextBox { Text = prefill?.MessageId, PlaceholderText = "generated if empty" };
+        var correlationId = new TextBox { Text = prefill?.CorrelationId };
+        var sessionId = new TextBox { Text = prefill?.SessionId, PlaceholderText = "required for session-enabled targets" };
+        var to = new TextBox { Text = prefill?.To };
+        var replyTo = new TextBox { Text = prefill?.ReplyTo };
+        var ttl = new TextBox { PlaceholderText = "entity default — or e.g. 00:30:00" };
+        var delay = new TextBox { PlaceholderText = "send now — or minutes from now to schedule" };
+        var properties = new TextBox
+        {
+            Text = OutgoingMessage.FormatProperties(prefill?.ApplicationProperties),
+            AcceptsReturn = true,
+            Height = 90,
+            PlaceholderText = "one name=value per line, e.g.\ntenant=acme\nretry=3",
+            FontFamily = new FontFamily("Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace"),
+            FontSize = 12,
+        };
+        var error = ErrorText();
+
+        var fields = new Grid { ColumnDefinitions = new ColumnDefinitions("140,*"), RowSpacing = 6 };
+        void Row(string label, Control control)
+        {
+            var row = fields.RowDefinitions.Count;
+            fields.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            var l = new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center };
+            Grid.SetRow(l, row);
+            Grid.SetRow(control, row);
+            Grid.SetColumn(control, 1);
+            fields.Children.Add(l);
+            fields.Children.Add(control);
+        }
+
+        Row("Content type", contentType);
+        Row("Subject", subject);
+        Row("Message ID", messageId);
+        Row("Correlation ID", correlationId);
+        Row("Session ID", sessionId);
+        Row("To", to);
+        Row("Reply to", replyTo);
+        Row("Time to live", ttl);
+        Row("Schedule in (min)", delay);
+
+        ComposedMessage? result = null;
+        var dialog = BuildDialog(title, 680, out var ok, out var panel, "Send");
+        panel.Children.Add(Label("Target queue or topic"));
+        panel.Children.Add(target);
+        panel.Children.Add(Label("Body"));
+        panel.Children.Add(body);
+        panel.Children.Add(fields);
+        panel.Children.Add(Label("Application properties"));
+        panel.Children.Add(properties);
+        panel.Children.Add(error);
+
+        ok.Click += (_, _) =>
+        {
+            void Fail(string text)
+            {
+                error.Text = text;
+                error.IsVisible = true;
+            }
+
+            if (target.SelectedItem is not string targetPath || string.IsNullOrWhiteSpace(targetPath))
+            {
+                Fail("Choose a target.");
+                return;
+            }
+
+            TimeSpan? timeToLive = null;
+            if (!string.IsNullOrWhiteSpace(ttl.Text))
+            {
+                if (!TimeSpan.TryParse(ttl.Text, System.Globalization.CultureInfo.InvariantCulture, out var parsed) || parsed <= TimeSpan.Zero)
+                {
+                    Fail("Time to live must look like 00:30:00 (hh:mm:ss) or 1.00:00:00 (d.hh:mm:ss).");
+                    return;
+                }
+
+                timeToLive = parsed;
+            }
+
+            DateTimeOffset? scheduleAt = null;
+            if (!string.IsNullOrWhiteSpace(delay.Text))
+            {
+                if (!double.TryParse(delay.Text, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var minutes) || minutes <= 0)
+                {
+                    Fail("Schedule must be a positive number of minutes.");
+                    return;
+                }
+
+                scheduleAt = DateTimeOffset.UtcNow.AddMinutes(minutes);
+            }
+
+            IReadOnlyDictionary<string, object> props;
+            try
+            {
+                props = OutgoingMessage.ParseProperties(properties.Text);
+            }
+            catch (FormatException ex)
+            {
+                Fail("Application properties: " + ex.Message);
+                return;
+            }
+
+            result = new ComposedMessage(targetPath, new OutgoingMessage(
+                body.Text ?? "", contentType.Text, subject.Text, messageId.Text, correlationId.Text, sessionId.Text,
+                to.Text, replyTo.Text, timeToLive, scheduleAt, props));
+            dialog.Close();
+        };
+
+        dialog.SizeToContent = SizeToContent.Manual;
+        dialog.Height = 760;
+        dialog.CanResize = true;
+        var content = dialog.Content;
+        dialog.Content = null; // detach before re-parenting into the scroll viewer
+        dialog.Content = new ScrollViewer { Content = content };
+        await dialog.ShowDialog(owner);
+        return result;
+    }
+
+    public async Task<Stream?> SaveJsonFileAsync(string title, string suggestedFileName)
+    {
+        var file = await owner.StorageProvider.SaveFilePickerAsync(new Avalonia.Platform.Storage.FilePickerSaveOptions
+        {
+            Title = title,
+            SuggestedFileName = suggestedFileName,
+            DefaultExtension = "json",
+            FileTypeChoices = [new Avalonia.Platform.Storage.FilePickerFileType("JSON") { Patterns = ["*.json"] }],
+        });
+
+        return file is null ? null : await file.OpenWriteAsync();
     }
 
     public async Task ShowMessageAsync(string title, string message)
