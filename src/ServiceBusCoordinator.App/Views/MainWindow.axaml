@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:ServiceBusCoordinator.App.ViewModels"
+        xmlns:core="using:ServiceBusCoordinator.Core.Models"
         x:Class="ServiceBusCoordinator.App.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="Service Bus Coordinator"
@@ -100,17 +101,56 @@
           <TextBlock Text="{Binding CountsText}" FontSize="12" />
 
           <WrapPanel Margin="0,8,0,0">
-            <ToggleSwitch IsChecked="{Binding ShowDeadLetter}" IsEnabled="{Binding !IsBusy}"
-                          OffContent="Active" OnContent="Dead-letter" Margin="0,0,12,4" />
+            <ComboBox ItemsSource="{Binding SourceOptions}" SelectedItem="{Binding SelectedSource}" IsEnabled="{Binding !IsBusy}"
+                      MinWidth="190" Margin="0,0,12,4" ToolTip.Tip="Which sub-queue to show">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:SourceOption">
+                  <TextBlock Text="{Binding Label}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
             <Button Content="Refresh" Command="{Binding RefreshCommand}" Margin="0,0,4,4" />
             <Button Content="Load more" Command="{Binding LoadMoreCommand}" Margin="0,0,12,4" />
             <Button Content="Resubmit selected" Command="{Binding ResubmitSelectedCommand}" Margin="0,0,4,4"
-                    IsVisible="{Binding ShowDeadLetter}" />
+                    IsVisible="{Binding IsDeadLetterSource}" />
             <Button Content="Resubmit all" Command="{Binding ResubmitAllCommand}" Margin="0,0,12,4"
-                    IsVisible="{Binding ShowDeadLetter}" />
+                    IsVisible="{Binding IsDeadLetterSource}" />
+            <Button Content="Cancel scheduled" Command="{Binding CancelScheduledCommand}" Margin="0,0,4,4"
+                    IsVisible="{Binding CanCancelScheduledHere}" ToolTip.Tip="Cancel the ticked scheduled messages" />
+            <Button Content="Delete deferred" Command="{Binding DeleteDeferredCommand}" Margin="0,0,12,4"
+                    ToolTip.Tip="Delete the ticked deferred messages" />
             <Button Content="Purge…" Command="{Binding PurgeCommand}" Margin="0,0,4,4" Foreground="#E81123" />
             <Button Content="Cancel" Command="{Binding CancelCommand}" Margin="12,0,4,4" IsVisible="{Binding IsBusy}" />
           </WrapPanel>
+
+          <!-- Sessions: active messages of a session-enabled entity are browsed one session at a time -->
+          <Border Classes="banner" IsVisible="{Binding IsSessionMode}" Margin="0,4,0,0">
+            <StackPanel Spacing="6">
+              <TextBlock FontSize="12" TextWrapping="Wrap"
+                         Text="Session-enabled: messages are shown one session at a time. Opening or finding sessions briefly locks them, which pauses consumers of those sessions for a few seconds." />
+              <WrapPanel>
+                <TextBox Text="{Binding SessionId}" PlaceholderText="Session ID" MinWidth="220" Margin="0,0,4,4" />
+                <Button Content="Open" Command="{Binding OpenSessionCommand}" Margin="0,0,4,4" />
+                <Button Content="Next available" Command="{Binding NextSessionCommand}" Margin="0,0,12,4" />
+                <Button Content="Find sessions" Command="{Binding FindSessionsCommand}" Margin="0,0,4,4" />
+                <ComboBox ItemsSource="{Binding Sessions}" SelectedItem="{Binding SelectedSession}" MinWidth="220"
+                          PlaceholderText="Found sessions" Margin="0,0,12,4">
+                  <ComboBox.ItemTemplate>
+                    <DataTemplate x:DataType="core:SessionSummary">
+                      <TextBlock Text="{Binding SessionId}" />
+                    </DataTemplate>
+                  </ComboBox.ItemTemplate>
+                </ComboBox>
+                <Button Content="Clear state…" Command="{Binding ClearSessionStateCommand}" Margin="0,0,4,4" />
+              </WrapPanel>
+              <StackPanel Orientation="Horizontal" Spacing="6"
+                          IsVisible="{Binding SessionStateText, Converter={x:Static ObjectConverters.IsNotNull}}">
+                <TextBlock Text="Session state:" FontSize="12" FontWeight="SemiBold" />
+                <TextBlock Text="{Binding SessionStateText}" FontSize="12" FontFamily="{StaticResource Mono}"
+                           TextTrimming="CharacterEllipsis" MaxWidth="700" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
 
           <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsBusy}" Height="3" MinHeight="3" />
           <TextBlock Text="{Binding StatusText}" Classes="muted" FontSize="12" />
@@ -123,30 +163,32 @@
 
           <!-- Message list -->
           <DockPanel Grid.Row="0">
-            <Grid DockPanel.Dock="Top" ColumnDefinitions="36,90,220,150,150,50,200,*" Margin="4,0,0,4">
+            <Grid DockPanel.Dock="Top" ColumnDefinitions="36,90,80,220,150,150,50,200,*" Margin="4,0,0,4">
               <CheckBox Grid.Column="0" ToolTip.Tip="Tick / untick all"
                         Command="{Binding CheckAllCommand}"
                         CommandParameter="{Binding $self.IsChecked}" />
               <TextBlock Grid.Column="1" Text="Seq #" FontWeight="SemiBold" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="2" Text="Message ID" FontWeight="SemiBold" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="3" Text="Subject" FontWeight="SemiBold" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="4" Text="Enqueued" FontWeight="SemiBold" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="5" Text="Tries" FontWeight="SemiBold" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="6" Text="Dead-letter reason" FontWeight="SemiBold" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="7" Text="Body" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="2" Text="State" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="3" Text="Message ID" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="4" Text="Subject" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="5" Text="Enqueued" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="6" Text="Tries" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="7" Text="Dead-letter reason" FontWeight="SemiBold" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="8" Text="Body" FontWeight="SemiBold" VerticalAlignment="Center" />
             </Grid>
             <ListBox ItemsSource="{Binding Messages}" SelectedItem="{Binding SelectedMessage}">
               <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="vm:MessageRowViewModel">
-                  <Grid ColumnDefinitions="36,90,220,150,150,50,200,*">
+                  <Grid ColumnDefinitions="36,90,80,220,150,150,50,200,*">
                     <CheckBox Grid.Column="0" IsChecked="{Binding IsChecked}" />
                     <TextBlock Grid.Column="1" Text="{Binding SequenceNumber}" VerticalAlignment="Center" />
-                    <TextBlock Grid.Column="2" Text="{Binding MessageId}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                    <TextBlock Grid.Column="3" Text="{Binding Subject}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                    <TextBlock Grid.Column="4" Text="{Binding Enqueued}" VerticalAlignment="Center" />
-                    <TextBlock Grid.Column="5" Text="{Binding DeliveryCount}" VerticalAlignment="Center" />
-                    <TextBlock Grid.Column="6" Text="{Binding DeadLetterReason}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
-                    <TextBlock Grid.Column="7" Text="{Binding BodyPreview}" TextTrimming="CharacterEllipsis"
+                    <TextBlock Grid.Column="2" Text="{Binding StateLabel}" Foreground="#0078D4" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="3" Text="{Binding MessageId}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="4" Text="{Binding Subject}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="5" Text="{Binding Enqueued}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="6" Text="{Binding DeliveryCount}" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="7" Text="{Binding DeadLetterReason}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="8" Text="{Binding BodyPreview}" TextTrimming="CharacterEllipsis"
                                FontFamily="{StaticResource Mono}" FontSize="12" VerticalAlignment="Center" />
                   </Grid>
                 </DataTemplate>

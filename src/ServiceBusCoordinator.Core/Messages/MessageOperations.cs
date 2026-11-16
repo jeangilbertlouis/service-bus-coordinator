@@ -14,64 +14,279 @@ public sealed record ResubmitOptions(
 
 public sealed record ResubmitResult(int Resubmitted, int Failed, bool UsedTransactions, IReadOnlyList<string> Errors);
 
-/// <summary>Peek, purge and dead-letter resubmit for one namespace.</summary>
+public sealed record PeekResult(IReadOnlyList<MessageView> Messages, string? SessionId);
+
+/// <summary>Peek, purge, resubmit, scheduled/deferred handling and session tools for one namespace.</summary>
 public sealed class MessageOperations
 {
     private const int PurgeBatchSize = 500;
     private const int ReceiveBatchSize = 100;
+    private const int SweepPageSize = 250;
+    private const int DeferredBatchSize = 100;
     private static readonly TimeSpan ReceiveWait = TimeSpan.FromSeconds(3);
+
+    /// <summary>How long to wait for "next available session" before concluding there is none.</summary>
+    public static TimeSpan SessionAcceptTimeout { get; set; } = TimeSpan.FromSeconds(5);
 
     private readonly NamespaceConnection _connection;
 
     internal MessageOperations(NamespaceConnection connection) => _connection = connection;
 
-    /// <summary>Non-destructive peek starting at <paramref name="fromSequenceNumber"/>.</summary>
-    public async Task<IReadOnlyList<MessageView>> PeekAsync(
-        EntityInfo entity, bool deadLetter, long? fromSequenceNumber, int maxMessages, CancellationToken ct = default)
-    {
-        EnsureSupported(entity, deadLetter);
-        await using var receiver = CreateReceiver(_connection.Client, entity, deadLetter, ServiceBusReceiveMode.PeekLock);
-        var messages = await receiver.PeekMessagesAsync(maxMessages, fromSequenceNumber, ct);
-        return messages.Select(MessageView.From).ToList();
-    }
+    private ServiceBusClient Client => _connection.Client;
 
-    /// <summary>Deletes every message enqueued before the purge started. Returns the number deleted.</summary>
-    public async Task<long> PurgeAsync(EntityInfo entity, bool deadLetter, IProgress<long>? progress, CancellationToken ct = default)
-    {
-        EnsureSupported(entity, deadLetter);
-        var cutoff = DateTimeOffset.UtcNow;
-        long total = 0;
+    // ----------------------------------------------------------------- Peek
 
-        // The SDK's server-side batch delete is not public in the stable package yet, so drain with ReceiveAndDelete.
-        // Stop once we reach messages that arrived after the purge started, so a busy entity can't keep us looping.
-        await using var receiver = CreateReceiver(_connection.Client, entity, deadLetter, ServiceBusReceiveMode.ReceiveAndDelete);
-        while (true)
+    /// <summary>
+    /// Non-destructive peek. For the active messages of a session-enabled entity, <paramref name="sessionId"/> picks
+    /// the session; when null the next available session is used and returned in the result.
+    /// </summary>
+    public async Task<PeekResult> PeekAsync(
+        EntityInfo entity, MessageSource source, long? fromSequenceNumber, int maxMessages, string? sessionId = null, CancellationToken ct = default)
+    {
+        EnsureHasMessages(entity);
+
+        if (NeedsSessionReceiver(entity, source))
         {
-            var batch = await receiver.ReceiveMessagesAsync(PurgeBatchSize, ReceiveWait, ct);
-            if (batch.Count == 0)
+            await using var sessionReceiver = string.IsNullOrEmpty(sessionId)
+                ? await TryAcceptNextSessionAsync(entity, ServiceBusReceiveMode.PeekLock, ct)
+                : await AcceptSessionAsync(entity, sessionId, ServiceBusReceiveMode.PeekLock, ct);
+            if (sessionReceiver is null)
             {
-                return total;
+                return new PeekResult([], null);
             }
 
-            total += batch.Count;
-            progress?.Report(total);
+            var sessionMessages = await sessionReceiver.PeekMessagesAsync(maxMessages, fromSequenceNumber, ct);
+            return new PeekResult(sessionMessages.Select(MessageView.From).ToList(), sessionReceiver.SessionId);
+        }
+
+        await using var receiver = CreateReceiver(entity, source, ServiceBusReceiveMode.PeekLock);
+        var messages = await receiver.PeekMessagesAsync(maxMessages, fromSequenceNumber, ct);
+        return new PeekResult(messages.Select(MessageView.From).ToList(), null);
+    }
+
+    // ----------------------------------------------------------------- Sessions
+
+    /// <summary>
+    /// Finds sessions that currently have messages by briefly locking each one (consumers are blocked from those
+    /// sessions for the few seconds this takes). Service Bus has no API to list sessions without locking them.
+    /// </summary>
+    public async Task<IReadOnlyList<SessionSummary>> ListSessionsAsync(EntityInfo entity, int maxSessions = 100, CancellationToken ct = default)
+    {
+        EnsureHasMessages(entity);
+        var held = new List<ServiceBusSessionReceiver>();
+        var result = new List<SessionSummary>();
+        try
+        {
+            while (held.Count < maxSessions)
+            {
+                var receiver = await TryAcceptNextSessionAsync(entity, ServiceBusReceiveMode.PeekLock, ct);
+                if (receiver is null)
+                {
+                    break;
+                }
+
+                held.Add(receiver);
+                var state = await receiver.GetSessionStateAsync(ct);
+                result.Add(new SessionSummary(receiver.SessionId, state?.ToMemory().Length ?? 0));
+            }
+        }
+        finally
+        {
+            foreach (var receiver in held)
+            {
+                await receiver.DisposeAsync();
+            }
+        }
+
+        return result.OrderBy(s => s.SessionId, StringComparer.Ordinal).ToList();
+    }
+
+    public async Task<byte[]?> GetSessionStateAsync(EntityInfo entity, string sessionId, CancellationToken ct = default)
+    {
+        await using var receiver = await AcceptSessionAsync(entity, sessionId, ServiceBusReceiveMode.PeekLock, ct);
+        var state = await receiver.GetSessionStateAsync(ct);
+        return state?.ToArray();
+    }
+
+    public async Task ClearSessionStateAsync(EntityInfo entity, string sessionId, CancellationToken ct = default)
+    {
+        await using var receiver = await AcceptSessionAsync(entity, sessionId, ServiceBusReceiveMode.PeekLock, ct);
+        await receiver.SetSessionStateAsync(null, ct);
+    }
+
+    // ----------------------------------------------------------------- Purge
+
+    /// <summary>
+    /// Deletes every message enqueued before the purge started, including deferred messages and (for queues) scheduled
+    /// messages. Session-enabled entities are purged session by session. Returns the number of messages removed.
+    /// </summary>
+    public async Task<long> PurgeAsync(
+        EntityInfo entity, MessageSource source, IProgress<OperationProgress>? progress, CancellationToken ct = default)
+    {
+        EnsureHasMessages(entity);
+        var cutoff = DateTimeOffset.UtcNow;
+        var counter = new Counter(progress);
+
+        if (NeedsSessionReceiver(entity, source))
+        {
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            while (true)
+            {
+                await using var sessionReceiver = await TryAcceptNextSessionAsync(entity, ServiceBusReceiveMode.ReceiveAndDelete, ct);
+                if (sessionReceiver is null || !visited.Add(sessionReceiver.SessionId))
+                {
+                    break;
+                }
+
+                counter.Note = $"session '{sessionReceiver.SessionId}'";
+                await DrainAsync(sessionReceiver, cutoff, counter, ct);
+                await SweepDeferredAndScheduledAsync(entity, source, sessionReceiver, cutoff, counter, ct);
+            }
+
+            // Note: sessions holding only scheduled or deferred messages are never offered by AcceptNextSession,
+            // so those messages can't be reached without knowing the session id.
+            return counter.Total;
+        }
+
+        await using var receiver = CreateReceiver(entity, source, ServiceBusReceiveMode.ReceiveAndDelete);
+        await DrainAsync(receiver, cutoff, counter, ct);
+        await SweepDeferredAndScheduledAsync(entity, source, receiver, cutoff, counter, ct);
+        return counter.Total;
+    }
+
+    /// <summary>
+    /// Removes messages with a ReceiveAndDelete receiver until empty or until it reaches messages that arrived after
+    /// the purge started (so a busy entity can't keep it looping). The SDK's server-side batch delete is still internal.
+    /// </summary>
+    private static async Task DrainAsync(ServiceBusReceiver receiver, DateTimeOffset cutoff, Counter counter, CancellationToken ct)
+    {
+        while (true)
+        {
+            var batch = await Throttling.RunAsync(
+                c => receiver.ReceiveMessagesAsync(PurgeBatchSize, ReceiveWait, c), counter.Throttled, ct);
+            if (batch.Count == 0)
+            {
+                return;
+            }
+
+            counter.Add(batch.Count);
             if (batch.Any(m => m.EnqueuedTime > cutoff))
             {
-                return total;
+                return;
             }
         }
     }
 
+    /// <summary>Deferred messages can't be received normally, and scheduled ones aren't visible yet; find them by peeking.</summary>
+    private async Task SweepDeferredAndScheduledAsync(
+        EntityInfo entity, MessageSource source, ServiceBusReceiver receiveAndDeleteReceiver, DateTimeOffset cutoff, Counter counter, CancellationToken ct)
+    {
+        var (deferred, scheduled) = await FindDeferredAndScheduledAsync(receiveAndDeleteReceiver, cutoff, ct);
+
+        foreach (var chunk in deferred.Chunk(DeferredBatchSize))
+        {
+            var removed = await Throttling.RunAsync(
+                c => receiveAndDeleteReceiver.ReceiveDeferredMessagesAsync(chunk, c), counter.Throttled, ct);
+            counter.Add(removed.Count);
+        }
+
+        if (scheduled.Count > 0 && entity.Kind == EntityKind.Queue && source == MessageSource.Active)
+        {
+            await CancelScheduledInternalAsync(entity, scheduled, counter, ct);
+        }
+    }
+
+    private static async Task<(List<long> Deferred, List<long> Scheduled)> FindDeferredAndScheduledAsync(
+        ServiceBusReceiver receiver, DateTimeOffset cutoff, CancellationToken ct)
+    {
+        var deferred = new List<long>();
+        var scheduled = new List<long>();
+        long? from = null;
+        while (true)
+        {
+            var page = await receiver.PeekMessagesAsync(SweepPageSize, from, ct);
+            if (page.Count == 0)
+            {
+                break;
+            }
+
+            foreach (var m in page.Where(m => m.EnqueuedTime <= cutoff))
+            {
+                if (m.State == ServiceBusMessageState.Deferred)
+                {
+                    deferred.Add(m.SequenceNumber);
+                }
+                else if (m.State == ServiceBusMessageState.Scheduled)
+                {
+                    scheduled.Add(m.SequenceNumber);
+                }
+            }
+
+            from = page[^1].SequenceNumber + 1;
+        }
+
+        return (deferred, scheduled);
+    }
+
+    // ----------------------------------------------------------------- Scheduled & deferred
+
+    /// <summary>Cancels scheduled messages on a queue. (Topic schedules live on the topic and can't be peeked.)</summary>
+    public async Task<int> CancelScheduledAsync(EntityInfo entity, IReadOnlyCollection<long> sequenceNumbers, CancellationToken ct = default)
+    {
+        if (entity.Kind != EntityKind.Queue)
+        {
+            throw new NotSupportedException("Scheduled messages can only be cancelled on queues.");
+        }
+
+        var counter = new Counter(null);
+        await CancelScheduledInternalAsync(entity, sequenceNumbers, counter, ct);
+        return (int)counter.Total;
+    }
+
+    private async Task CancelScheduledInternalAsync(EntityInfo entity, IEnumerable<long> sequenceNumbers, Counter counter, CancellationToken ct)
+    {
+        await using var sender = Client.CreateSender(entity.Name);
+        foreach (var chunk in sequenceNumbers.Chunk(DeferredBatchSize))
+        {
+            await Throttling.RunAsync(c => sender.CancelScheduledMessagesAsync(chunk, c), counter.Throttled, ct);
+            counter.Add(chunk.Length);
+        }
+    }
+
+    /// <summary>Deletes deferred messages by sequence number. Session entities need the session id.</summary>
+    public async Task<int> DeleteDeferredAsync(
+        EntityInfo entity, MessageSource source, IReadOnlyCollection<long> sequenceNumbers, string? sessionId = null, CancellationToken ct = default)
+    {
+        EnsureHasMessages(entity);
+        if (NeedsSessionReceiver(entity, source))
+        {
+            if (string.IsNullOrEmpty(sessionId))
+            {
+                throw new InvalidOperationException("Open a session first: deferred messages in a session can only be reached through it.");
+            }
+
+            await using var sessionReceiver = await AcceptSessionAsync(entity, sessionId, ServiceBusReceiveMode.ReceiveAndDelete, ct);
+            return (await sessionReceiver.ReceiveDeferredMessagesAsync(sequenceNumbers, ct)).Count;
+        }
+
+        await using var receiver = CreateReceiver(entity, source, ServiceBusReceiveMode.ReceiveAndDelete);
+        return (await receiver.ReceiveDeferredMessagesAsync(sequenceNumbers, ct)).Count;
+    }
+
+    // ----------------------------------------------------------------- Resubmit
+
     /// <summary>
-    /// Moves dead-lettered messages to <see cref="ResubmitOptions.TargetEntityPath"/>. Each send + complete runs in a
-    /// cross-entity transaction when the service allows it; otherwise it sends then completes (at-least-once).
+    /// Moves dead-lettered (or transfer dead-lettered) messages to <see cref="ResubmitOptions.TargetEntityPath"/>.
+    /// Each send + complete runs in a cross-entity transaction when the service allows it; otherwise it sends then
+    /// completes (at-least-once).
     /// </summary>
     public async Task<ResubmitResult> ResubmitAsync(
-        EntityInfo source, ResubmitOptions options, IProgress<int>? progress, CancellationToken ct = default)
+        EntityInfo source, MessageSource subQueue, ResubmitOptions options, IProgress<OperationProgress>? progress, CancellationToken ct = default)
     {
-        if (!source.HasMessages)
+        EnsureHasMessages(source);
+        if (!subQueue.IsDeadLetter())
         {
-            throw new InvalidOperationException("Select a queue or subscription.");
+            throw new InvalidOperationException("Only dead-letter and transfer dead-letter messages can be resubmitted.");
         }
 
         if (string.IsNullOrWhiteSpace(options.TargetEntityPath))
@@ -82,15 +297,17 @@ public sealed class MessageOperations
         var errors = new List<string>();
         var held = new Dictionary<long, ServiceBusReceivedMessage>();
         var selection = options.SequenceNumbers;
+        var sourcePath = source.Path + subQueue.PathSuffix();
+        var counter = new Counter(progress);
         int done = 0, failed = 0;
         var useTransactions = true;
 
         await using var txClient = new ServiceBusClient(
             _connection.Profile.ConnectionString,
-            new ServiceBusClientOptions { EnableCrossEntityTransactions = true });
+            new ServiceBusClientOptions { EnableCrossEntityTransactions = true, RetryOptions = Throttling.DefaultRetryOptions() });
 
         // With cross-entity transactions the first operation fixes the "via" entity, so receive comes first.
-        var receiver = CreateReceiver(txClient, source, deadLetter: true, ServiceBusReceiveMode.PeekLock);
+        var receiver = CreateReceiver(txClient, source, subQueue, ServiceBusReceiveMode.PeekLock);
         var txSender = txClient.CreateSender(options.TargetEntityPath);
         ServiceBusSender? plainSender = null;
 
@@ -108,7 +325,8 @@ public sealed class MessageOperations
                     break;
                 }
 
-                var batch = await receiver.ReceiveMessagesAsync(ReceiveBatchSize, ReceiveWait, ct);
+                var batch = await Throttling.RunAsync(
+                    c => receiver.ReceiveMessagesAsync(ReceiveBatchSize, ReceiveWait, c), counter.Throttled, ct);
                 if (batch.Count == 0)
                 {
                     break;
@@ -127,7 +345,7 @@ public sealed class MessageOperations
 
                     sawNew = true;
                     var outgoing = MessageCloner.Clone(
-                        message, options.StripDeadLetterProperties, options.StampResubmitHeaders, source.Path, DateTimeOffset.UtcNow);
+                        message, options.StripDeadLetterProperties, options.StampResubmitHeaders, sourcePath, DateTimeOffset.UtcNow);
 
                     try
                     {
@@ -151,13 +369,13 @@ public sealed class MessageOperations
 
                         if (!moved)
                         {
-                            plainSender ??= _connection.Client.CreateSender(options.TargetEntityPath);
-                            await plainSender.SendMessageAsync(outgoing, ct);
+                            plainSender ??= Client.CreateSender(options.TargetEntityPath);
+                            await Throttling.RunAsync(c => plainSender.SendMessageAsync(outgoing, c), counter.Throttled, ct);
                             await receiver.CompleteMessageAsync(message, ct);
                         }
 
                         done++;
-                        progress?.Report(done);
+                        counter.Add(1);
                     }
                     catch (Exception ex) when (ex is not OperationCanceledException)
                     {
@@ -189,6 +407,8 @@ public sealed class MessageOperations
         return new ResubmitResult(done, failed, useTransactions && done > 0, errors);
     }
 
+    // ----------------------------------------------------------------- Helpers
+
     private static async Task TryAbandonAsync(ServiceBusReceiver receiver, ServiceBusReceivedMessage message)
     {
         try
@@ -201,32 +421,79 @@ public sealed class MessageOperations
         }
     }
 
-    private static void EnsureSupported(EntityInfo entity, bool deadLetter)
+    private static void EnsureHasMessages(EntityInfo entity)
     {
         if (!entity.HasMessages)
         {
             throw new InvalidOperationException("Topics do not hold messages. Select one of its subscriptions.");
         }
-
-        if (entity.RequiresSession && !deadLetter)
-        {
-            throw new NotSupportedException(
-                "This entity is session-enabled. Browsing active session messages is planned (phase 4); the dead-letter queue can be used now.");
-        }
     }
 
-    private static ServiceBusReceiver CreateReceiver(
-        ServiceBusClient client, EntityInfo entity, bool deadLetter, ServiceBusReceiveMode mode)
+    /// <summary>Dead-letter sub-queues never require sessions, even on session-enabled entities.</summary>
+    internal static bool NeedsSessionReceiver(EntityInfo entity, MessageSource source) =>
+        entity.RequiresSession && source == MessageSource.Active;
+
+    private ServiceBusReceiver CreateReceiver(EntityInfo entity, MessageSource source, ServiceBusReceiveMode mode) =>
+        CreateReceiver(Client, entity, source, mode);
+
+    private static ServiceBusReceiver CreateReceiver(ServiceBusClient client, EntityInfo entity, MessageSource source, ServiceBusReceiveMode mode)
     {
         var options = new ServiceBusReceiverOptions
         {
             ReceiveMode = mode,
-            SubQueue = deadLetter ? SubQueue.DeadLetter : SubQueue.None,
+            SubQueue = source.ToSubQueue(),
             PrefetchCount = 0,
         };
 
         return entity.Kind == EntityKind.Subscription
             ? client.CreateReceiver(entity.TopicName, entity.Name, options)
             : client.CreateReceiver(entity.Name, options);
+    }
+
+    private async Task<ServiceBusSessionReceiver> AcceptSessionAsync(
+        EntityInfo entity, string sessionId, ServiceBusReceiveMode mode, CancellationToken ct)
+    {
+        var options = new ServiceBusSessionReceiverOptions { ReceiveMode = mode, PrefetchCount = 0 };
+        return entity.Kind == EntityKind.Subscription
+            ? await Client.AcceptSessionAsync(entity.TopicName, entity.Name, sessionId, options, ct)
+            : await Client.AcceptSessionAsync(entity.Name, sessionId, options, ct);
+    }
+
+    private async Task<ServiceBusSessionReceiver?> TryAcceptNextSessionAsync(EntityInfo entity, ServiceBusReceiveMode mode, CancellationToken ct)
+    {
+        var options = new ServiceBusSessionReceiverOptions { ReceiveMode = mode, PrefetchCount = 0 };
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(SessionAcceptTimeout);
+        try
+        {
+            return entity.Kind == EntityKind.Subscription
+                ? await Client.AcceptNextSessionAsync(entity.TopicName, entity.Name, options, timeout.Token)
+                : await Client.AcceptNextSessionAsync(entity.Name, options, timeout.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (ServiceBusException ex) when (ex.Reason == ServiceBusFailureReason.ServiceTimeout)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>Running total plus throttle notes, reported through one progress sink.</summary>
+    private sealed class Counter(IProgress<OperationProgress>? progress)
+    {
+        public long Total { get; private set; }
+
+        public string? Note { get; set; }
+
+        public void Add(long count)
+        {
+            Total += count;
+            progress?.Report(new OperationProgress(Total, Note));
+        }
+
+        public void Throttled(TimeSpan wait) =>
+            progress?.Report(new OperationProgress(Total, $"namespace is throttling — waiting {wait.TotalSeconds:N0}s"));
     }
 }

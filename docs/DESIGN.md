@@ -61,7 +61,8 @@ ServiceBusCoordinator.sln
 ### 3.3 Viewing messages
 * `ServiceBusReceiver.PeekMessagesAsync` — never locks or removes messages.
 * Paged by sequence number ("Load more"); page size configurable (default 50).
-* Sub-queue switch: **Active** / **Dead-letter** (transfer DLQ later).
+* Sub-queue picker: **Active** / **Dead-letter** / **Transfer dead-letter**.
+* A **State** column marks *Scheduled* and *Deferred* messages (peek returns both).
 * Detail pane: body (pretty-printed JSON/XML, text, or hex dump for binary), system properties
   (MessageId, SequenceNumber, EnqueuedTime, DeliveryCount, SessionId, ContentType, CorrelationId,
   TTL, DeadLetterReason/ErrorDescription/Source) and application properties.
@@ -71,6 +72,9 @@ ServiceBusCoordinator.sln
 * Drains the entity with a `ReceiveAndDelete` receiver in batches of 500; progress is reported as messages deleted. Cancellable.
 * Stops when the entity is empty or once it reaches messages enqueued after the purge started, so a busy
   entity cannot keep it looping forever.
+* Then sweeps (by peeking) for **deferred** messages — deleted via `ReceiveDeferredMessagesAsync` — and, on queues,
+  **scheduled** messages — cancelled via `CancelScheduledMessagesAsync`. Both are invisible to a normal receive.
+* Session-enabled entities are purged session by session (see §3.6).
 * The SDK's server-side batch delete (`DeleteMessagesAsync`) is still internal in `Azure.Messaging.ServiceBus` 7.21;
   switch to it when it becomes public (much faster for large entities).
 
@@ -90,6 +94,33 @@ ServiceBusCoordinator.sln
    the run are not picked up in an endless loop.
 8. Target defaults to the parent entity (queue, or the subscription's **topic**). Resubmitting to a topic delivers
    the message to **every** matching subscription — the UI warns about this and offers another target entity instead.
+9. Works the same from the **transfer dead-letter queue** (`/$transfer/$deadletterqueue`).
+
+### 3.6 Session-enabled entities (phase 4)
+* Dead-letter sub-queues never require sessions, so DLQ browsing, purge and resubmit are unchanged.
+* **Active messages** are browsed one session at a time: type a session ID, take the **next available** session,
+  or **Find sessions**. Service Bus has no API to list sessions without locking them, so *Find sessions* accepts
+  sessions one after another (holding each briefly), then releases them all. Consumers of those sessions pause for
+  those few seconds — the UI says so.
+* **Session state** is shown for the open session and can be cleared (with confirmation).
+* **Purge** accepts each next available session in ReceiveAndDelete mode, drains it and removes its deferred
+  messages, until no session is offered. Limitation: a session that holds *only* scheduled or deferred messages is
+  never offered by the service, so it can't be reached without its session ID.
+
+### 3.7 Scheduled & deferred messages (phase 4)
+* **Cancel scheduled**: tick scheduled messages on a queue and cancel them. Scheduled messages on a *topic* are
+  held by the topic itself and can't be peeked through a subscription, so they are not shown.
+* **Delete deferred**: tick deferred messages and delete them (receive-by-sequence-number in ReceiveAndDelete mode).
+  On session entities this uses the open session.
+
+### 3.8 Throttling (phase 4)
+* Every client uses exponential retry (6 retries, 0.8 s → 30 s, 60 s per try).
+* Bulk loops (purge, resubmit, cancel) add another layer: if the namespace is still `ServiceBusy` after the SDK
+  retries, they wait 2 s, 4 s, 8 s … (max 60 s, 8 attempts) and carry on, showing "namespace is throttling — waiting Ns".
+
+### 3.9 Emulator support
+* A connection string with `UseDevelopmentEmulator=true` is accepted as-is. The emulator serves management
+  operations on port **5300**, so the app adds that port for the administration client automatically.
 
 ## 4. Security
 * Connection strings only live in memory and in the OS secret store.
@@ -97,9 +128,12 @@ ServiceBusCoordinator.sln
 * Destructive operations (purge, resubmit) always require explicit confirmation.
 
 ## 5. Testing
-* **Unit tests** (xUnit) for connection parsing, message cloning/stripping, secret scrubbing and store serialisation.
-* **Integration tests** against the official **Azure Service Bus emulator** (Docker) — note the emulator does not
-  support every management operation, so discovery is also verified against a real dev namespace.
+* **Unit tests** (xUnit) for connection parsing, emulator port handling, message cloning/stripping, secret scrubbing,
+  store serialisation, sub-queue mapping and throttling back-off.
+* **Integration tests** (`IntegrationTests.cs`) run only when `SBC_TEST_CONNECTION` is set to a connection string with
+  Manage rights — the local emulator (`emulator/`) or a disposable dev namespace. Each test creates and deletes its own
+  queue and covers discovery, resubmit (all/selected), purge incl. deferred & scheduled, cancel/delete by sequence
+  number, and sessions (find, peek, purge).
 
 ## 6. Delivery phases
 
@@ -108,14 +142,14 @@ ServiceBusCoordinator.sln
 | 1. Foundation | Solution skeleton, connection manager with OS secure storage, namespace tree with counts, manual-entity fallback | Built — needs live-namespace testing |
 | 2. Viewer | Peek with paging, Active/DLQ toggle, message detail pane | Built — needs live-namespace testing |
 | 3. Operations | Purge (confirm + progress + cancel), DLQ resubmit (selected/all, transactional, topic warning, target picker) | Built — needs live-namespace testing |
-| 4. Edge cases | Session-enabled entities (peek/purge per session), transfer DLQ, scheduled & deferred messages, throttling/back-off on bulk ops | Planned |
+| 4. Edge cases | Session-enabled entities (peek/purge per session, find sessions, session state), transfer DLQ, scheduled & deferred messages, throttling/back-off on bulk ops, emulator support | Built — integration tests written, not yet run against a live namespace |
 | 5. Polish | Search/filter, export, send test message, installers per OS | Planned |
 
 ## 7. Future improvements
 * **Entra ID authentication** (`DefaultAzureCredential` / `az login`) alongside connection strings.
 * **Browse namespaces from a subscription** via Azure Resource Manager (pick instead of paste).
-* **Session support**: browse sessions, view/clear session state.
-* **Transfer DLQ** and **deferred message** views; cancel scheduled messages.
+* **Session state editing** (not just view/clear) and resubmitting deferred messages.
+* **Server-side batch delete** for purge once `DeleteMessagesAsync` is public in the SDK.
 * **Filtered resubmit/purge**: by dead-letter reason, enqueued time window, property match, or body text.
 * **Targeted topic resubmit**: stamp a property and create/verify a matching subscription rule so a resubmitted
   message reaches only its original subscription.

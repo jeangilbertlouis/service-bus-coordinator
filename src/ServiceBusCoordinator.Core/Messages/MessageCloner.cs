@@ -13,6 +13,7 @@ public static class MessageCloner
     public const string ResubmitCountKey = "x-resubmit-count";
     public const string OriginalSequenceNumberKey = "x-original-sequence-number";
 
+    /// <param name="sourcePath">Full path the message came from, e.g. <c>orders/$deadletterqueue</c>.</param>
     public static ServiceBusMessage Clone(
         ServiceBusReceivedMessage source,
         bool stripDeadLetterProperties,
@@ -51,7 +52,7 @@ public static class MessageCloner
                 && int.TryParse(Convert.ToString(raw, CultureInfo.InvariantCulture), out var n) ? n : 0;
 
             props[ResubmittedAtKey] = now.UtcDateTime.ToString("O", CultureInfo.InvariantCulture);
-            props[ResubmittedFromKey] = sourcePath + "/$deadletterqueue";
+            props[ResubmittedFromKey] = sourcePath;
             props[ResubmitCountKey] = previous + 1;
             props[OriginalSequenceNumberKey] = source.SequenceNumber;
         }

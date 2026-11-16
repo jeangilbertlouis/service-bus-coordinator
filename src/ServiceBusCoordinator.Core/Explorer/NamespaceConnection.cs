@@ -21,8 +21,8 @@ public sealed class NamespaceConnection : IAsyncDisposable
         }
 
         Info = info!;
-        Client = new ServiceBusClient(profile.ConnectionString);
-        _admin = new ServiceBusAdministrationClient(profile.ConnectionString);
+        Client = new ServiceBusClient(profile.ConnectionString, new ServiceBusClientOptions { RetryOptions = Throttling.DefaultRetryOptions() });
+        _admin = new ServiceBusAdministrationClient(ConnectionStringInfo.GetAdministrationConnectionString(profile.ConnectionString));
         Messages = new MessageOperations(this);
     }
 

@@ -1,12 +1,20 @@
 using System.Collections.ObjectModel;
+using System.Text;
+using Azure.Messaging.ServiceBus;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using ServiceBusCoordinator.App.Services;
 using ServiceBusCoordinator.Core;
+using ServiceBusCoordinator.Core.Explorer;
 using ServiceBusCoordinator.Core.Messages;
 using ServiceBusCoordinator.Core.Models;
 
 namespace ServiceBusCoordinator.App.ViewModels;
+
+public sealed record SourceOption(MessageSource Value, string Label)
+{
+    public override string ToString() => Label;
+}
 
 /// <summary>Right-hand pane: messages of the selected queue or subscription.</summary>
 public sealed partial class EntityViewModel : ObservableObject
@@ -22,7 +30,11 @@ public sealed partial class EntityViewModel : ObservableObject
     {
         _node = node;
         _dialogs = dialogs;
+        SelectedSource = SourceOptions[0];
+        _ready = true;
     }
+
+    private readonly bool _ready;
 
     public EntityInfo Entity => _node.Entity;
 
@@ -31,22 +43,56 @@ public sealed partial class EntityViewModel : ObservableObject
     public string KindLabel => Entity.Kind + (Entity.IsManual ? " (added manually)" : "") + (Entity.RequiresSession ? " · sessions" : "");
 
     public string CountsText => Entity.Counts is { } c
-        ? $"Active {c.Active:N0}   ·   Dead-letter {c.DeadLetter:N0}   ·   Scheduled {c.Scheduled:N0}   ·   Transfer DLQ {c.TransferDeadLetter:N0}"
+        ? $"Active {c.Active:N0}   ·   Dead-letter {c.DeadLetter:N0}   ·   Transfer DLQ {c.TransferDeadLetter:N0}"
+            + (Entity.Kind == EntityKind.Queue ? $"   ·   Scheduled {c.Scheduled:N0}" : "")
         : "Counts unavailable (no Manage rights)";
+
+    public IReadOnlyList<SourceOption> SourceOptions { get; } =
+    [
+        new(MessageSource.Active, "Active"),
+        new(MessageSource.DeadLetter, "Dead-letter"),
+        new(MessageSource.TransferDeadLetter, "Transfer dead-letter"),
+    ];
 
     public ObservableCollection<MessageRowViewModel> Messages { get; } = [];
 
-    [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(SubQueueLabel))]
-    public partial bool ShowDeadLetter { get; set; }
+    public ObservableCollection<SessionSummary> Sessions { get; } = [];
 
-    public string SubQueueLabel => ShowDeadLetter ? "dead-letter queue" : "active messages";
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(Source), nameof(SubQueueLabel), nameof(IsSessionMode), nameof(IsDeadLetterSource), nameof(IsActiveSource), nameof(CanCancelScheduledHere))]
+    [NotifyCanExecuteChangedFor(nameof(ResubmitSelectedCommand), nameof(ResubmitAllCommand), nameof(CancelScheduledCommand))]
+    public partial SourceOption SelectedSource { get; set; }
+
+    public MessageSource Source => SelectedSource.Value;
+
+    public string SubQueueLabel => Source.DisplayName();
+
+    public bool IsDeadLetterSource => Source.IsDeadLetter();
+
+    public bool IsActiveSource => Source == MessageSource.Active;
+
+    /// <summary>Active messages of a session-enabled entity are reached one session at a time.</summary>
+    public bool IsSessionMode => Entity.RequiresSession && Source == MessageSource.Active;
+
+    public bool CanCancelScheduledHere => IsActiveSource && Entity.Kind == EntityKind.Queue;
+
+    [ObservableProperty]
+    public partial string? SessionId { get; set; }
+
+    [ObservableProperty]
+    public partial SessionSummary? SelectedSession { get; set; }
+
+    [ObservableProperty]
+    public partial string? SessionStateText { get; set; }
 
     [ObservableProperty]
     public partial MessageRowViewModel? SelectedMessage { get; set; }
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(RefreshCommand), nameof(LoadMoreCommand), nameof(PurgeCommand), nameof(ResubmitSelectedCommand), nameof(ResubmitAllCommand))]
+    [NotifyCanExecuteChangedFor(
+        nameof(RefreshCommand), nameof(LoadMoreCommand), nameof(PurgeCommand), nameof(ResubmitSelectedCommand), nameof(ResubmitAllCommand),
+        nameof(CancelScheduledCommand), nameof(DeleteDeferredCommand), nameof(FindSessionsCommand), nameof(OpenSessionCommand),
+        nameof(NextSessionCommand), nameof(ClearSessionStateCommand))]
     public partial bool IsBusy { get; set; }
 
     [ObservableProperty]
@@ -63,14 +109,41 @@ public sealed partial class EntityViewModel : ObservableObject
 
     private bool CanLoadMoreNow => !IsBusy && CanLoadMore;
 
-    private bool CanResubmit => !IsBusy && ShowDeadLetter;
+    private bool CanResubmit => !IsBusy && IsDeadLetterSource;
 
-    partial void OnShowDeadLetterChanged(bool value)
+    private bool CanCancelScheduled => !IsBusy && CanCancelScheduledHere;
+
+    private bool HasSession => !IsBusy && !string.IsNullOrWhiteSpace(SessionId);
+
+    private NamespaceConnection Connection =>
+        _node.Namespace.Connection ?? throw new InvalidOperationException("Namespace is not connected.");
+
+    partial void OnSelectedSourceChanged(SourceOption value)
     {
-        ResubmitSelectedCommand.NotifyCanExecuteChanged();
-        ResubmitAllCommand.NotifyCanExecuteChanged();
+        if (!_ready || IsBusy)
+        {
+            return;
+        }
+
         _ = RefreshAsync();
     }
+
+    partial void OnSessionIdChanged(string? value)
+    {
+        OpenSessionCommand.NotifyCanExecuteChanged();
+        ClearSessionStateCommand.NotifyCanExecuteChanged();
+    }
+
+    partial void OnSelectedSessionChanged(SessionSummary? value)
+    {
+        if (value is not null && value.SessionId != SessionId)
+        {
+            SessionId = value.SessionId;
+            _ = RefreshAsync();
+        }
+    }
+
+    // ----------------------------------------------------------------- Loading
 
     [RelayCommand(CanExecute = nameof(NotBusy))]
     public async Task RefreshAsync()
@@ -97,12 +170,136 @@ public sealed partial class EntityViewModel : ObservableObject
         }
     }
 
+    private Task LoadPageAsync(long? fromSequenceNumber) => RunAsync("Loading", async ct =>
+    {
+        var result = await Connection.Messages.PeekAsync(
+            Entity, Source, fromSequenceNumber, PageSize, IsSessionMode ? SessionId : null, ct);
+
+        if (IsSessionMode && result.SessionId is { } opened && opened != SessionId)
+        {
+            SessionId = opened;
+        }
+
+        foreach (var m in result.Messages)
+        {
+            Messages.Add(new MessageRowViewModel(m));
+        }
+
+        CanLoadMore = result.Messages.Count > 0;
+        StatusText = Messages.Count switch
+        {
+            0 when IsSessionMode && result.SessionId is null => "No session with available messages was found.",
+            0 => $"No {SubQueueLabel}.",
+            _ => $"Showing {Messages.Count:N0} peeked message(s)" + (IsSessionMode ? $" in session '{SessionId}'." : "."),
+        };
+        SelectedMessage ??= Messages.FirstOrDefault();
+    });
+
+    private async Task RefreshCountsAsync()
+    {
+        try
+        {
+            _node.Entity = await Connection.RefreshAsync(_node.Entity);
+            OnPropertyChanged(nameof(Entity));
+            OnPropertyChanged(nameof(CountsText));
+        }
+        catch (Exception)
+        {
+            // Counts are best-effort.
+        }
+    }
+
+    // ----------------------------------------------------------------- Sessions
+
+    [RelayCommand(CanExecute = nameof(NotBusy))]
+    private async Task FindSessionsAsync()
+    {
+        await RunAsync("Finding sessions", async ct =>
+        {
+            var sessions = await Connection.Messages.ListSessionsAsync(Entity, ct: ct);
+            Sessions.Clear();
+            foreach (var s in sessions)
+            {
+                Sessions.Add(s);
+            }
+
+            StatusText = sessions.Count == 0
+                ? "No sessions with available messages."
+                : $"Found {sessions.Count:N0} session(s) with available messages.";
+        });
+    }
+
+    [RelayCommand(CanExecute = nameof(HasSession))]
+    private async Task OpenSessionAsync()
+    {
+        await RefreshAsync();
+        await LoadSessionStateAsync();
+    }
+
+    [RelayCommand(CanExecute = nameof(NotBusy))]
+    private async Task NextSessionAsync()
+    {
+        SessionId = null;
+        SessionStateText = null;
+        await RefreshAsync();
+        await LoadSessionStateAsync();
+    }
+
+    [RelayCommand(CanExecute = nameof(HasSession))]
+    private async Task ClearSessionStateAsync()
+    {
+        var sessionId = SessionId!;
+        if (!await _dialogs.ConfirmAsync("Clear session state", $"Clear the stored state of session '{sessionId}'?", "Clear"))
+        {
+            return;
+        }
+
+        await RunAsync("Clearing session state", async ct =>
+        {
+            await Connection.Messages.ClearSessionStateAsync(Entity, sessionId, ct);
+            SessionStateText = "(no state)";
+            StatusText = $"Cleared state of session '{sessionId}'.";
+        });
+    }
+
+    private async Task LoadSessionStateAsync()
+    {
+        if (string.IsNullOrWhiteSpace(SessionId))
+        {
+            SessionStateText = null;
+            return;
+        }
+
+        try
+        {
+            var state = await Connection.Messages.GetSessionStateAsync(Entity, SessionId);
+            SessionStateText = state is null || state.Length == 0 ? "(no state)" : BodyFormatter.Format(state).Text;
+        }
+        catch (Exception ex)
+        {
+            SessionStateText = "State unavailable: " + SecretScrubber.Scrub(ex.Message);
+        }
+    }
+
+    // ----------------------------------------------------------------- Purge
+
     [RelayCommand(CanExecute = nameof(NotBusy))]
     private async Task PurgeAsync()
     {
-        var count = Entity.Counts is { } c ? (ShowDeadLetter ? c.DeadLetter : c.Active) : (long?)null;
-        var countText = count is { } n ? $"{n:N0} message(s)" : "all messages";
-        var message = $"Permanently delete {countText} from the {SubQueueLabel} of '{Entity.Path}'?\n\nThis cannot be undone.";
+        var count = Entity.Counts is { } c
+            ? Source switch
+            {
+                MessageSource.DeadLetter => c.DeadLetter,
+                MessageSource.TransferDeadLetter => c.TransferDeadLetter,
+                _ => c.Active + (Entity.Kind == EntityKind.Queue ? c.Scheduled : 0),
+            }
+            : (long?)null;
+        var countText = count is { } n ? $"about {n:N0} message(s)" : "all messages";
+        var extra = Source == MessageSource.Active
+            ? (Entity.Kind == EntityKind.Queue ? " Deferred and scheduled messages are removed too." : " Deferred messages are removed too.")
+              + (Entity.RequiresSession ? " Sessions are purged one at a time." : "")
+            : "";
+        var message = $"Permanently delete {countText} from the {SubQueueLabel} of '{Entity.Path}'?{extra}\n\nThis cannot be undone.";
         var requireTyping = count is null or > TypeToConfirmThreshold ? Entity.Name : null;
 
         if (!await _dialogs.ConfirmAsync("Purge messages", message, "Purge", requireTyping))
@@ -112,12 +309,64 @@ public sealed partial class EntityViewModel : ObservableObject
 
         await RunAsync("Purging", async ct =>
         {
-            var deleted = await Connection.Messages.PurgeAsync(
-                Entity, ShowDeadLetter, new Progress<long>(d => StatusText = $"Purging… {d:N0} deleted"), ct);
+            var deleted = await Connection.Messages.PurgeAsync(Entity, Source, Progress("Purging", "deleted"), ct);
             StatusText = $"Purged {deleted:N0} message(s).";
         });
         await RefreshAsync();
     }
+
+    // ----------------------------------------------------------------- Scheduled & deferred
+
+    [RelayCommand(CanExecute = nameof(CanCancelScheduled))]
+    private async Task CancelScheduledAsync()
+    {
+        var selected = CheckedWithState(ServiceBusMessageState.Scheduled);
+        if (selected.Count == 0)
+        {
+            await _dialogs.ShowMessageAsync("Cancel scheduled", "Tick one or more messages whose state is 'Scheduled'.");
+            return;
+        }
+
+        if (!await _dialogs.ConfirmAsync("Cancel scheduled messages", $"Cancel {selected.Count:N0} scheduled message(s)? They will never be delivered.", "Cancel messages"))
+        {
+            return;
+        }
+
+        await RunAsync("Cancelling", async ct =>
+        {
+            var n = await Connection.Messages.CancelScheduledAsync(Entity, selected, ct);
+            StatusText = $"Cancelled {n:N0} scheduled message(s).";
+        });
+        await RefreshAsync();
+    }
+
+    [RelayCommand(CanExecute = nameof(NotBusy))]
+    private async Task DeleteDeferredAsync()
+    {
+        var selected = CheckedWithState(ServiceBusMessageState.Deferred);
+        if (selected.Count == 0)
+        {
+            await _dialogs.ShowMessageAsync("Delete deferred", "Tick one or more messages whose state is 'Deferred'.");
+            return;
+        }
+
+        if (!await _dialogs.ConfirmAsync("Delete deferred messages", $"Permanently delete {selected.Count:N0} deferred message(s)?", "Delete"))
+        {
+            return;
+        }
+
+        await RunAsync("Deleting deferred", async ct =>
+        {
+            var n = await Connection.Messages.DeleteDeferredAsync(Entity, Source, selected, IsSessionMode ? SessionId : null, ct);
+            StatusText = $"Deleted {n:N0} deferred message(s).";
+        });
+        await RefreshAsync();
+    }
+
+    private List<long> CheckedWithState(ServiceBusMessageState state) =>
+        Messages.Where(m => m.IsChecked && m.View.State == state).Select(m => m.SequenceNumber).ToList();
+
+    // ----------------------------------------------------------------- Resubmit
 
     [RelayCommand(CanExecute = nameof(CanResubmit))]
     private async Task ResubmitSelectedAsync()
@@ -136,13 +385,14 @@ public sealed partial class EntityViewModel : ObservableObject
     private async Task ResubmitAllAsync()
     {
         await RefreshCountsAsync();
-        var max = Entity.Counts?.DeadLetter;
-        await ResubmitAsync(max is { } n ? $"all {n:N0} dead-lettered message(s)" : "all dead-lettered messages", null, max);
+        var max = Entity.Counts is { } c ? (Source == MessageSource.DeadLetter ? c.DeadLetter : c.TransferDeadLetter) : (long?)null;
+        await ResubmitAsync(max is { } n ? $"all {n:N0} message(s)" : "all messages", null, max);
     }
 
     private async Task ResubmitAsync(string scope, IReadOnlySet<long>? selection, long? max)
     {
-        var choice = await _dialogs.ChooseResubmitAsync(Entity, scope, _node.Namespace.SendableEntities);
+        var source = Source;
+        var choice = await _dialogs.ChooseResubmitAsync(Entity, source, scope, _node.Namespace.SendableEntities);
         if (choice is null)
         {
             return;
@@ -152,8 +402,7 @@ public sealed partial class EntityViewModel : ObservableObject
         {
             var options = new ResubmitOptions(
                 choice.TargetEntityPath, choice.StripDeadLetterProperties, choice.StampResubmitHeaders, selection, max);
-            var result = await Connection.Messages.ResubmitAsync(
-                Entity, options, new Progress<int>(d => StatusText = $"Resubmitting… {d:N0} moved"), ct);
+            var result = await Connection.Messages.ResubmitAsync(Entity, source, options, Progress("Resubmitting", "moved"), ct);
 
             StatusText = $"Moved {result.Resubmitted:N0} message(s) to '{choice.TargetEntityPath}'"
                 + (result.UsedTransactions ? " (transactional)." : " (send-then-complete).")
@@ -167,34 +416,17 @@ public sealed partial class EntityViewModel : ObservableObject
         await RefreshAsync();
     }
 
-    private Core.Explorer.NamespaceConnection Connection =>
-        _node.Namespace.Connection ?? throw new InvalidOperationException("Namespace is not connected.");
+    // ----------------------------------------------------------------- Infrastructure
 
-    private async Task RefreshCountsAsync()
+    private Progress<OperationProgress> Progress(string verb, string noun) => new(p =>
     {
-        try
+        var text = new StringBuilder($"{verb}… {p.Processed:N0} {noun}");
+        if (p.Note is { } note)
         {
-            _node.Entity = await Connection.RefreshAsync(_node.Entity);
-            OnPropertyChanged(nameof(Entity));
-            OnPropertyChanged(nameof(CountsText));
-        }
-        catch (Exception)
-        {
-            // Counts are best-effort.
-        }
-    }
-
-    private Task LoadPageAsync(long? fromSequenceNumber) => RunAsync("Loading", async ct =>
-    {
-        var page = await Connection.Messages.PeekAsync(Entity, ShowDeadLetter, fromSequenceNumber, PageSize, ct);
-        foreach (var m in page)
-        {
-            Messages.Add(new MessageRowViewModel(m));
+            text.Append(" (").Append(note).Append(')');
         }
 
-        CanLoadMore = page.Count > 0;
-        StatusText = Messages.Count == 0 ? $"No {SubQueueLabel}." : $"Showing {Messages.Count:N0} peeked message(s).";
-        SelectedMessage ??= Messages.FirstOrDefault();
+        StatusText = text.ToString();
     });
 
     private async Task RunAsync(string verb, Func<CancellationToken, Task> work)

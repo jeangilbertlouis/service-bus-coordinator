@@ -16,7 +16,7 @@ public interface IDialogService
     /// <summary>Asks for confirmation. When <paramref name="typeToConfirm"/> is set the user must type it exactly.</summary>
     Task<bool> ConfirmAsync(string title, string message, string confirmLabel, string? typeToConfirm = null);
 
-    Task<ResubmitChoice?> ChooseResubmitAsync(EntityInfo source, string scopeDescription, IReadOnlyList<EntityInfo> targets);
+    Task<ResubmitChoice?> ChooseResubmitAsync(EntityInfo source, MessageSource subQueue, string scopeDescription, IReadOnlyList<EntityInfo> targets);
 
     Task ShowMessageAsync(string title, string message);
 }

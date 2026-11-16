@@ -154,7 +154,7 @@ public class MessageClonerTests
     public void Stamps_and_increments_resubmit_headers()
     {
         var now = new DateTimeOffset(2026, 11, 16, 12, 0, 0, TimeSpan.Zero);
-        var clone = MessageCloner.Clone(DeadLettered(new Dictionary<string, object> { ["x-resubmit-count"] = 2 }), false, true, "orders", now);
+        var clone = MessageCloner.Clone(DeadLettered(new Dictionary<string, object> { ["x-resubmit-count"] = 2 }), false, true, "orders/$deadletterqueue", now);
         Assert.Equal(3, clone.ApplicationProperties[MessageCloner.ResubmitCountKey]);
         Assert.Equal("orders/$deadletterqueue", clone.ApplicationProperties[MessageCloner.ResubmittedFromKey]);
         Assert.Equal(42L, clone.ApplicationProperties[MessageCloner.OriginalSequenceNumberKey]);

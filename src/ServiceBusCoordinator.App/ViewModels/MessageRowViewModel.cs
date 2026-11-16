@@ -29,6 +29,9 @@ public sealed partial class MessageRowViewModel : ObservableObject
 
     public string DeadLetterReason => View.DeadLetterReason ?? "";
 
+    /// <summary>Blank for normal messages; "Scheduled" or "Deferred" otherwise.</summary>
+    public string StateLabel => View.State == Azure.Messaging.ServiceBus.ServiceBusMessageState.Active ? "" : View.State.ToString();
+
     public string BodyPreview
     {
         get
@@ -59,6 +62,8 @@ public sealed partial class MessageRowViewModel : ObservableObject
         new("ExpiresAt", View.ExpiresAt == DateTimeOffset.MaxValue ? "never" : View.ExpiresAt.ToString("O")),
         new("TimeToLive", View.TimeToLive == TimeSpan.MaxValue ? "∞" : View.TimeToLive.ToString()),
         new("DeliveryCount", View.DeliveryCount.ToString()),
+        new("State", View.State.ToString()),
+        new("ScheduledEnqueueTime", View.ScheduledEnqueueTime == default ? "" : View.ScheduledEnqueueTime.ToString("O")),
         new("DeadLetterReason", View.DeadLetterReason ?? ""),
         new("DeadLetterErrorDescription", View.DeadLetterErrorDescription ?? ""),
         new("DeadLetterSource", View.DeadLetterSource ?? ""),

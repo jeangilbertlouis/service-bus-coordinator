@@ -95,7 +95,7 @@ public sealed class DialogService(Window owner) : IDialogService
         return result;
     }
 
-    public async Task<ResubmitChoice?> ChooseResubmitAsync(EntityInfo source, string scopeDescription, IReadOnlyList<EntityInfo> targets)
+    public async Task<ResubmitChoice?> ChooseResubmitAsync(EntityInfo source, MessageSource subQueue, string scopeDescription, IReadOnlyList<EntityInfo> targets)
     {
         var defaultTarget = source.DefaultResubmitTarget!;
         var useDefault = new RadioButton
@@ -151,8 +151,8 @@ public sealed class DialogService(Window owner) : IDialogService
         UpdateWarning();
 
         ResubmitChoice? result = null;
-        var dialog = BuildDialog("Resubmit dead-lettered messages", 560, out var ok, out var body, "Resubmit");
-        body.Children.Add(Text($"Move {scopeDescription} from '{source.Path}/$deadletterqueue' to:"));
+        var dialog = BuildDialog("Resubmit messages", 560, out var ok, out var body, "Resubmit");
+        body.Children.Add(Text($"Move {scopeDescription} from '{source.Path}{subQueue.PathSuffix()}' to:"));
         body.Children.Add(useDefault);
         body.Children.Add(useOther);
         body.Children.Add(other);
