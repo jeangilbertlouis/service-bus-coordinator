@@ -22,11 +22,18 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     public ObservableCollection<NamespaceNodeViewModel> Namespaces { get; } = [];
 
     [ObservableProperty]
-    [NotifyCanExecuteChangedFor(nameof(RemoveConnectionCommand), nameof(RefreshNamespaceCommand), nameof(AddEntityCommand))]
-    [NotifyPropertyChangedFor(nameof(SelectedNamespace))]
+    [NotifyCanExecuteChangedFor(nameof(RemoveConnectionCommand), nameof(RefreshNamespaceCommand), nameof(AddEntityCommand),
+        nameof(RefreshSelectedCommand), nameof(PurgeSelectedCommand))]
+    [NotifyPropertyChangedFor(nameof(SelectedNamespace), nameof(CanPurgeSelectedNode))]
     public partial TreeNodeViewModel? SelectedNode { get; set; }
 
     public NamespaceNodeViewModel? SelectedNamespace => SelectedNode?.Namespace;
+
+    /// <summary>Whether the selected tree node holds messages that can be purged (a queue or subscription).</summary>
+    public bool CanPurgeSelectedNode => SelectedNode is EntityNodeViewModel { Entity.HasMessages: true };
+
+    /// <summary>The load started when an entity is selected, so context-menu actions can wait for it.</summary>
+    private Task _entityLoad = Task.CompletedTask;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(HasEntity))]
@@ -81,7 +88,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         if (value is EntityNodeViewModel entityNode)
         {
             CurrentEntity = new EntityViewModel(entityNode, _dialogs);
-            _ = CurrentEntity.RefreshAsync();
+            _entityLoad = CurrentEntity.RefreshAsync();
         }
         else
         {
@@ -131,6 +138,52 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         {
             SelectedNode = ns;
             await ns.LoadAsync();
+        }
+    }
+
+    // ----------------------------------------------------------------- Tree context menu
+
+    /// <summary>Refreshes the right-clicked node: an entity reloads its messages and counts, anything else reloads the namespace.</summary>
+    [RelayCommand(CanExecute = nameof(HasNamespace))]
+    private async Task RefreshSelectedAsync()
+    {
+        if (SelectedNode is EntityNodeViewModel && CurrentEntity is { } entity)
+        {
+            await WaitForEntityLoadAsync();
+            if (!entity.IsBusy)
+            {
+                await entity.RefreshAsync();
+            }
+        }
+        else
+        {
+            await RefreshNamespaceAsync();
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanPurgeSelected))]
+    private async Task PurgeSelectedAsync(MessageSource source)
+    {
+        if (CurrentEntity is not { } entity || !CanPurgeSelectedNode)
+        {
+            return;
+        }
+
+        await WaitForEntityLoadAsync();
+        await entity.PurgeSourceAsync(source);
+    }
+
+    private bool CanPurgeSelected(MessageSource source) => CanPurgeSelectedNode;
+
+    private async Task WaitForEntityLoadAsync()
+    {
+        try
+        {
+            await _entityLoad;
+        }
+        catch (Exception)
+        {
+            // The entity view shows its own load errors.
         }
     }
 

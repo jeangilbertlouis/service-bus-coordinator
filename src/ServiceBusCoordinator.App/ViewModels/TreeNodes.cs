@@ -21,6 +21,13 @@ public abstract partial class TreeNodeViewModel : ObservableObject
     [ObservableProperty]
     public partial string? AlertBadge { get; set; }
 
+    /// <summary>Dead-letter count for entities that hold messages; shown even when zero.</summary>
+    [ObservableProperty]
+    public partial string? DeadLetterBadge { get; set; }
+
+    [ObservableProperty]
+    public partial bool HasDeadLetters { get; set; }
+
     [ObservableProperty]
     public partial bool IsExpanded { get; set; }
 
@@ -88,7 +95,13 @@ public sealed partial class EntityNodeViewModel : TreeNodeViewModel
         if (value.Counts is { } c)
         {
             Badge = c.Active.ToString("N0");
-            AlertBadge = c.DeadLetter > 0 ? $"DLQ {c.DeadLetter:N0}" : null;
+            DeadLetterBadge = value.HasMessages ? $"DLQ {c.DeadLetter:N0}" : null;
+            HasDeadLetters = c.DeadLetter > 0;
+        }
+        else
+        {
+            DeadLetterBadge = null;
+            HasDeadLetters = false;
         }
     }
 }

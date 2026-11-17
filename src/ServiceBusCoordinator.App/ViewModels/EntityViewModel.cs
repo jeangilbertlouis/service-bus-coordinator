@@ -513,10 +513,19 @@ public sealed partial class EntityViewModel : ObservableObject
     // ----------------------------------------------------------------- Purge
 
     [RelayCommand(CanExecute = nameof(NotBusy))]
-    private async Task PurgeAsync()
+    private Task PurgeAsync() => PurgeSourceAsync(Source);
+
+    /// <summary>Purges one sub-queue after confirmation; also used by the tree's context menu.</summary>
+    public async Task PurgeSourceAsync(MessageSource source)
     {
+        if (IsBusy)
+        {
+            StatusText = "Wait for the current operation to finish, then try again.";
+            return;
+        }
+
         var count = Entity.Counts is { } c
-            ? Source switch
+            ? source switch
             {
                 MessageSource.DeadLetter => c.DeadLetter,
                 MessageSource.TransferDeadLetter => c.TransferDeadLetter,
@@ -524,11 +533,11 @@ public sealed partial class EntityViewModel : ObservableObject
             }
             : (long?)null;
         var countText = count is { } n ? $"about {n:N0} message(s)" : "all messages";
-        var extra = Source == MessageSource.Active
+        var extra = source == MessageSource.Active
             ? (Entity.Kind == EntityKind.Queue ? " Deferred and scheduled messages are removed too." : " Deferred messages are removed too.")
               + (Entity.RequiresSession ? " Sessions are purged one at a time." : "")
             : "";
-        var message = $"Permanently delete {countText} from the {SubQueueLabel} of '{Entity.Path}'?{extra}\n\nThis cannot be undone.";
+        var message = $"Permanently delete {countText} from the {source.DisplayName()} of '{Entity.Path}'?{extra}\n\nThis cannot be undone.";
         var requireTyping = count is null or > TypeToConfirmThreshold ? Entity.Name : null;
 
         if (!await _dialogs.ConfirmAsync("Purge messages", message, "Purge", requireTyping))
@@ -538,8 +547,8 @@ public sealed partial class EntityViewModel : ObservableObject
 
         await RunAsync("Purging", async ct =>
         {
-            var deleted = await Connection.Messages.PurgeAsync(Entity, Source, Progress("Purging", "deleted"), ct);
-            StatusText = $"Purged {deleted:N0} message(s).";
+            var deleted = await Connection.Messages.PurgeAsync(Entity, source, Progress("Purging", "deleted"), ct);
+            StatusText = $"Purged {deleted:N0} message(s) from the {source.DisplayName()}.";
         });
         await RefreshAsync();
     }
