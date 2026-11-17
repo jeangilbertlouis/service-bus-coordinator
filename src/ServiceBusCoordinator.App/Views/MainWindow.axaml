@@ -47,6 +47,26 @@
               </Button>
             </Grid>
 
+            <Border Classes="banner update" IsVisible="{Binding HasUpdate}">
+              <StackPanel Spacing="6">
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                  <PathIcon Data="{x:Static app:Icons.Download}" Width="14" Height="14" Margin="0,0,8,0" Foreground="{DynamicResource AccentBrush}" />
+                  <TextBlock Grid.Column="1" Text="{Binding UpdateTitle}" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap" />
+                  <Button Grid.Column="2" Classes="subtle" Padding="4,0" Content="✕" FontSize="11" Command="{Binding DismissUpdateCommand}"
+                          IsVisible="{Binding !IsUpdating}" ToolTip.Tip="Hide until next start" />
+                </Grid>
+                <ProgressBar Minimum="0" Maximum="100" Value="{Binding UpdateProgress}" Height="4" MinHeight="4" IsVisible="{Binding IsUpdating}" />
+                <TextBlock Text="{Binding UpdateError}" Foreground="{DynamicResource DangerBrush}" FontSize="12" TextWrapping="Wrap"
+                           IsVisible="{Binding UpdateError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <Button Classes="accent" Content="Update and restart" Command="{Binding InstallUpdateCommand}" IsVisible="{Binding CanInstallUpdate}" />
+                  <Button Classes="accent" Content="Download" Command="{Binding OpenReleasePageCommand}" IsVisible="{Binding CanOnlyDownloadUpdate}"
+                          ToolTip.Tip="Open the release page to download it" />
+                  <Button Content="What's new" Command="{Binding OpenReleasePageCommand}" IsVisible="{Binding CanInstallUpdate}" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
             <Border Classes="banner" IsVisible="{Binding StorageWarning, Converter={x:Static ObjectConverters.IsNotNull}}">
               <TextBlock Text="{Binding StorageWarning}" TextWrapping="Wrap" FontSize="12" />
             </Border>
@@ -548,8 +568,10 @@
     <!-- ===================== Status bar ===================== -->
     <Border Grid.Row="1" Classes="statusbar">
       <DockPanel>
-        <TextBlock DockPanel.Dock="Right" Classes="muted" FontSize="11" VerticalAlignment="Center"
-                   Text="{Binding AppVersion, StringFormat='v{0}'}" />
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <Button Classes="subtle link" Content="Check for updates" Command="{Binding CheckForUpdatesCommand}" Padding="0" FontSize="11" />
+          <TextBlock Classes="muted" FontSize="11" VerticalAlignment="Center" Text="{Binding AppVersion, StringFormat='v{0}'}" />
+        </StackPanel>
         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
           <ProgressBar IsIndeterminate="True" Width="80" Height="4" MinHeight="4" VerticalAlignment="Center"
                        IsVisible="{Binding CurrentEntity.IsBusy, FallbackValue=False}" />

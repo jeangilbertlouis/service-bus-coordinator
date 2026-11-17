@@ -158,6 +158,27 @@ ServiceBusCoordinator.sln
   `xattr -dr com.apple.quarantine "Service Bus Coordinator.app"` or right-click → Open). Signed installers are a
   future improvement.
 
+### 3.14a In-place updates
+
+* On startup (and from **Check for updates** in the status bar) the app asks GitHub for the latest stable release
+  (`/repos/jeangilbertlouis/service-bus-coordinator/releases/latest`; drafts and pre-releases are never offered) and
+  compares its tag with the running version by SemVer precedence. A newer release shows a banner in the sidebar.
+  Nothing else is sent: the only identifying header is `User-Agent: ServiceBusCoordinator/<version>`. Set
+  `SBC_DISABLE_UPDATE_CHECK=1` to skip the startup check.
+* **Update and restart** downloads the package for the running RID next to the install, checks its SHA-256 against
+  the release's `SHA256SUMS.txt` (written by CI), unpacks it, then **renames** the running executable (or `.app`
+  bundle) to `*.old` and moves the new one into its place. Renaming a running file works on Windows, macOS and
+  Linux, so no helper process is needed. If the second move fails the first is rolled back. The new version is
+  started (`open -n` for a bundle) and the old process exits; the next start deletes `*.old` and any leftover
+  `.sbc-update-*` staging folder.
+* Integrity rests on HTTPS to GitHub plus the checksum file from the same release, which catches corrupt or truncated
+  downloads but not a compromised release. Code signing is the stronger fix (see Future improvements).
+* Only published single-file builds update themselves (detected by an empty assembly location). Running from source,
+  a release without a package or checksum for this platform, or an install folder the user cannot write to fall back
+  to opening the release page.
+* Logic lives in `Core/Updates` (`SemanticVersion`, `UpdateChecker`, `UpdateInstaller`) and is unit-tested with
+  synthetic packages; `App/Services/UpdateService` wires it to the UI.
+
 ### 3.14 Entity properties (post-phase 5)
 * Every queue, topic and subscription has a **Properties** tab (topics are now selectable and show only this tab).
 * Read-only, grouped into cards: *General* (status, created/updated/accessed, size, max size, max message size,
@@ -220,6 +241,6 @@ ServiceBusCoordinator.sln
 * **Auto-refresh** counts with a configurable interval; alerts when DLQ count crosses a threshold.
 * **Audit log** of destructive operations (local file).
 * **Saved layout** (sidebar width, splitter positions).
-* **Signed installers**: MSIX/winget (Windows), notarised DMG (macOS), AppImage/Flatpak (Linux); app icon; auto-update.
+* **Signed installers**: MSIX/winget (Windows), notarised DMG (macOS), AppImage/Flatpak (Linux); app icon. Signing would also let the in-place updater verify packages by signature, not just checksum.
 * **Trimmed builds** to shrink the ~45 MB packages (needs Avalonia/SDK trimming annotations to be verified).
 * **CLI companion** reusing `ServiceBusCoordinator.Core` for scripted purge/resubmit.

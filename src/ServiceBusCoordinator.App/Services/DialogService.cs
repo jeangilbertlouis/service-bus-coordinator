@@ -360,6 +360,8 @@ public sealed class DialogService(Window owner) : IDialogService
         await dialog.ShowDialog(owner);
     }
 
+    public async Task OpenUrlAsync(Uri url) => await owner.Launcher.LaunchUriAsync(url);
+
     private static Window BuildDialog(string title, double width, out Button ok, out StackPanel body, string okLabel, bool showCancel = true)
     {
         body = new StackPanel { Spacing = 8 };

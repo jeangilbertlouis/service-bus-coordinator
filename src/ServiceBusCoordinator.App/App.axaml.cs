@@ -20,6 +20,7 @@ public partial class App : Application
             window.DataContext = viewModel;
             window.Opened += async (_, _) => await viewModel.InitializeAsync();
             window.Closing += (_, _) => viewModel.Dispose();
+            viewModel.ShutdownRequested += () => desktop.Shutdown();
             desktop.MainWindow = window;
         }
 

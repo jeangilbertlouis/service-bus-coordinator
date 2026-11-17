@@ -27,4 +27,7 @@ public interface IDialogService
     Task<Stream?> SaveJsonFileAsync(string title, string suggestedFileName);
 
     Task ShowMessageAsync(string title, string message);
+
+    /// <summary>Opens a web page in the user's browser.</summary>
+    Task OpenUrlAsync(Uri url);
 }

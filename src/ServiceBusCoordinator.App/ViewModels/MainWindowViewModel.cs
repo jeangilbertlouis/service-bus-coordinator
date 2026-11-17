@@ -5,6 +5,7 @@ using ServiceBusCoordinator.App.Services;
 using ServiceBusCoordinator.Core;
 using ServiceBusCoordinator.Core.Connections;
 using ServiceBusCoordinator.Core.Models;
+using ServiceBusCoordinator.Core.Updates;
 
 namespace ServiceBusCoordinator.App.ViewModels;
 
@@ -80,7 +81,13 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             Namespaces.Add(new NamespaceNodeViewModel(profile));
         }
 
-        await Task.WhenAll(Namespaces.Select(n => n.LoadAsync()));
+        var loads = Task.WhenAll(Namespaces.Select(n => n.LoadAsync()));
+        if (UpdateService.StartupCheckEnabled)
+        {
+            _ = CheckForUpdatesCoreAsync(userAsked: false);
+        }
+
+        await loads;
     }
 
     partial void OnSelectedNodeChanged(TreeNodeViewModel? value)
@@ -239,6 +246,128 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         {
             StorageWarning = "Connections could not be saved: " + SecretScrubber.Scrub(ex.Message);
         }
+    }
+
+    // ----------------------------------------------------------------- Updates
+
+    /// <summary>Raised when the app should close, after an update has been installed and the new version started.</summary>
+    public event Action? ShutdownRequested;
+
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasUpdate), nameof(UpdateTitle), nameof(CanInstallUpdate), nameof(CanOnlyDownloadUpdate))]
+    [NotifyCanExecuteChangedFor(nameof(InstallUpdateCommand))]
+    public partial AvailableUpdate? Update { get; set; }
+
+    public bool HasUpdate => Update is not null;
+
+    public string UpdateTitle => Update is { } u ? $"Version {u.Version} is available" : "";
+
+    /// <summary>The app can download and install this update itself.</summary>
+    public bool CanInstallUpdate => Update is { CanInstallInPlace: true } && UpdateService.Install is not null;
+
+    /// <summary>The update must be downloaded by hand (running from source, or the release lacks this platform's files).</summary>
+    public bool CanOnlyDownloadUpdate => HasUpdate && !CanInstallUpdate;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(InstallUpdateCommand), nameof(CheckForUpdatesCommand))]
+    public partial bool IsUpdating { get; set; }
+
+    [ObservableProperty]
+    public partial double UpdateProgress { get; set; }
+
+    [ObservableProperty]
+    public partial string? UpdateError { get; set; }
+
+    private bool NotUpdating => !IsUpdating;
+
+    private bool CanStartInstall => !IsUpdating && CanInstallUpdate;
+
+    [RelayCommand(CanExecute = nameof(NotUpdating))]
+    private Task CheckForUpdatesAsync() => CheckForUpdatesCoreAsync(userAsked: true);
+
+    private async Task CheckForUpdatesCoreAsync(bool userAsked)
+    {
+        try
+        {
+            Update = await UpdateService.CheckAsync();
+            UpdateError = null;
+            if (userAsked && Update is null)
+            {
+                await _dialogs.ShowMessageAsync("Check for updates", $"You have the latest version ({AppVersion}).");
+            }
+        }
+        catch (Exception ex)
+        {
+            // A failed background check stays quiet; only report it when the user asked.
+            if (userAsked)
+            {
+                await _dialogs.ShowMessageAsync("Check for updates", "Could not check for updates: " + SecretScrubber.Scrub(ex.Message));
+            }
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanStartInstall))]
+    private async Task InstallUpdateAsync()
+    {
+        if (Update is not { Package: { } package } update)
+        {
+            return;
+        }
+
+        var size = package.Size > 0 ? $" (about {package.Size / (1024.0 * 1024.0):N0} MB)" : "";
+        if (!await _dialogs.ConfirmAsync(
+                "Update and restart",
+                $"Download version {update.Version}{size}, replace this copy ({AppVersion}) and restart?\n\n"
+                + "Your connections are kept. Anything in progress, such as a purge or resubmit, is stopped.",
+                "Update and restart"))
+        {
+            return;
+        }
+
+        IsUpdating = true;
+        UpdateError = null;
+        UpdateProgress = 0;
+        try
+        {
+            await UpdateService.InstallAsync(update, new Progress<double>(p => UpdateProgress = p * 100), CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            UpdateError = "Update failed: " + SecretScrubber.Scrub(ex.Message);
+            IsUpdating = false;
+            return;
+        }
+
+        try
+        {
+            UpdateService.Relaunch();
+        }
+        catch (Exception ex)
+        {
+            IsUpdating = false;
+            await _dialogs.ShowMessageAsync(
+                "Update installed",
+                $"Version {update.Version} is installed, but it could not be started automatically ({SecretScrubber.Scrub(ex.Message)}). Close and reopen the app to use it.");
+            return;
+        }
+
+        ShutdownRequested?.Invoke();
+    }
+
+    [RelayCommand]
+    private async Task OpenReleasePageAsync()
+    {
+        if (Update is { } u)
+        {
+            await _dialogs.OpenUrlAsync(u.ReleasePage);
+        }
+    }
+
+    [RelayCommand]
+    private void DismissUpdate()
+    {
+        Update = null;
+        UpdateError = null;
     }
 
     public void Dispose()

@@ -17,6 +17,8 @@ and subscriptions, read messages, clear out queues, and send dead-lettered messa
 - **See entity settings**: lock duration, time-to-live, forwarding, subscription rules and more.
 - Works with **sessions**, **scheduled and deferred messages**, and the **local Service Bus emulator**.
 - Light and dark themes that follow your OS.
+- **Updates itself**: when a new version is released, click **Update and restart**. Set the environment variable
+  `SBC_DISABLE_UPDATE_CHECK=1` to stop the check on startup.
 
 ## Install
 
