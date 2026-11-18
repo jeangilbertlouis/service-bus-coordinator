@@ -70,7 +70,12 @@ To publish a release:
 
 1. Bump `<Version>` in `src/ServiceBusCoordinator.App/ServiceBusCoordinator.App.csproj`.
 2. Commit, then push a matching tag, for example `v0.6.0`.
-3. CI creates a GitHub release with the packages attached.
+3. CI creates a GitHub release with the packages and a `SHA256SUMS.txt` attached.
+
+Installed copies find the new release on their next start and offer **Update and restart**. The updater needs the
+package names produced by `build/publish.*` (`ServiceBusCoordinator-<version>-<rid>.zip|.tar.gz`) and the checksum
+file, so keep both if you change packaging. The tag must be a plain `vX.Y.Z`; tags with a pre-release suffix and
+releases marked as pre-release are not offered.
 
 ## Project layout
 

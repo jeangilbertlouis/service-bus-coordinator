@@ -20,6 +20,9 @@
           <SolidColorBrush x:Key="AccentSoftBrush" Color="#E3EFFA" />
           <SolidColorBrush x:Key="DangerBrush" Color="#C42B1C" />
           <SolidColorBrush x:Key="DangerSoftBrush" Color="#FCE8E8" />
+          <SolidColorBrush x:Key="DangerSolidBrush" Color="#C42B1C" />
+          <SolidColorBrush x:Key="DangerSolidHoverBrush" Color="#A52317" />
+          <SolidColorBrush x:Key="DangerSolidPressedBrush" Color="#8A1D13" />
           <SolidColorBrush x:Key="WarningBrush" Color="#8A5A00" />
           <SolidColorBrush x:Key="WarningSoftBrush" Color="#FFF4D6" />
           <SolidColorBrush x:Key="SuccessBrush" Color="#107C10" />
@@ -40,6 +43,9 @@
           <SolidColorBrush x:Key="AccentSoftBrush" Color="#1E3448" />
           <SolidColorBrush x:Key="DangerBrush" Color="#FF8A80" />
           <SolidColorBrush x:Key="DangerSoftBrush" Color="#4A2426" />
+          <SolidColorBrush x:Key="DangerSolidBrush" Color="#C42B1C" />
+          <SolidColorBrush x:Key="DangerSolidHoverBrush" Color="#D9372A" />
+          <SolidColorBrush x:Key="DangerSolidPressedBrush" Color="#A52317" />
           <SolidColorBrush x:Key="WarningBrush" Color="#F2C661" />
           <SolidColorBrush x:Key="WarningSoftBrush" Color="#3D3218" />
           <SolidColorBrush x:Key="SuccessBrush" Color="#6CCB5F" />
@@ -148,6 +154,21 @@
       <Setter Property="CornerRadius" Value="6" />
       <Setter Property="Padding" Value="10,8" />
     </Style>
+    <Style Selector="Border.banner.update">
+      <Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" />
+    </Style>
+    <Style Selector="Button.link">
+      <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+      <Setter Property="Cursor" Value="Hand" />
+    </Style>
+    <Style Selector="Button.link:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+    </Style>
+    <Style Selector="Button.link:disabled /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
+    </Style>
     <Style Selector="Border.danger">
       <Setter Property="Background" Value="{DynamicResource DangerSoftBrush}" />
       <Setter Property="CornerRadius" Value="6" />
@@ -174,6 +195,12 @@
     </Style>
     <Style Selector="Border.pill.alert > TextBlock">
       <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+    </Style>
+    <Style Selector="Border.pill.muted">
+      <Setter Property="Background" Value="{DynamicResource HeaderRowBrush}" />
+    </Style>
+    <Style Selector="Border.pill.muted > TextBlock">
+      <Setter Property="Foreground" Value="{DynamicResource MutedBrush}" />
     </Style>
     <Style Selector="Border.pill.warn">
       <Setter Property="Background" Value="{DynamicResource WarningSoftBrush}" />
@@ -206,6 +233,23 @@
     <!-- Buttons -->
     <Style Selector="Button.danger">
       <Setter Property="Foreground" Value="{DynamicResource DangerBrush}" />
+    </Style>
+    <!-- Solid red, for destructive actions that should stand out (Purge) -->
+    <Style Selector="Button.dangerSolid">
+      <Setter Property="Background" Value="{DynamicResource DangerSolidBrush}" />
+      <Setter Property="Foreground" Value="White" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.dangerSolid:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource DangerSolidHoverBrush}" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.dangerSolid:pressed /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Background" Value="{DynamicResource DangerSolidPressedBrush}" />
+      <Setter Property="Foreground" Value="White" />
+    </Style>
+    <Style Selector="Button.dangerSolid:disabled /template/ ContentPresenter#PART_ContentPresenter">
+      <Setter Property="Opacity" Value="0.45" />
     </Style>
     <Style Selector="Button.subtle">
       <Setter Property="Background" Value="Transparent" />

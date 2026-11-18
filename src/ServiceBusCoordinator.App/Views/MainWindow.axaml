@@ -47,6 +47,26 @@
               </Button>
             </Grid>
 
+            <Border Classes="banner update" IsVisible="{Binding HasUpdate}">
+              <StackPanel Spacing="6">
+                <Grid ColumnDefinitions="Auto,*,Auto">
+                  <PathIcon Data="{x:Static app:Icons.Download}" Width="14" Height="14" Margin="0,0,8,0" Foreground="{DynamicResource AccentBrush}" />
+                  <TextBlock Grid.Column="1" Text="{Binding UpdateTitle}" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap" />
+                  <Button Grid.Column="2" Classes="subtle" Padding="4,0" Content="✕" FontSize="11" Command="{Binding DismissUpdateCommand}"
+                          IsVisible="{Binding !IsUpdating}" ToolTip.Tip="Hide until next start" />
+                </Grid>
+                <ProgressBar Minimum="0" Maximum="100" Value="{Binding UpdateProgress}" Height="4" MinHeight="4" IsVisible="{Binding IsUpdating}" />
+                <TextBlock Text="{Binding UpdateError}" Foreground="{DynamicResource DangerBrush}" FontSize="12" TextWrapping="Wrap"
+                           IsVisible="{Binding UpdateError, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <Button Classes="accent" Content="Update and restart" Command="{Binding InstallUpdateCommand}" IsVisible="{Binding CanInstallUpdate}" />
+                  <Button Classes="accent" Content="Download" Command="{Binding OpenReleasePageCommand}" IsVisible="{Binding CanOnlyDownloadUpdate}"
+                          ToolTip.Tip="Open the release page to download it" />
+                  <Button Content="What's new" Command="{Binding OpenReleasePageCommand}" IsVisible="{Binding CanInstallUpdate}" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
             <Border Classes="banner" IsVisible="{Binding StorageWarning, Converter={x:Static ObjectConverters.IsNotNull}}">
               <TextBlock Text="{Binding StorageWarning}" TextWrapping="Wrap" FontSize="12" />
             </Border>
@@ -58,8 +78,33 @@
             <TextBlock Classes="muted" TextWrapping="Wrap" Margin="16,4" FontSize="12"
                        IsVisible="{Binding HasNoConnections}"
                        Text="No connections yet. Click 'Add connection' and paste a Service Bus connection string." />
-            <TreeView Classes="nav" ItemsSource="{Binding Namespaces}" SelectedItem="{Binding SelectedNode}" Margin="4,0,4,8"
+            <TreeView x:Name="NavTree" Classes="nav" ItemsSource="{Binding Namespaces}" SelectedItem="{Binding SelectedNode}" Margin="4,0,4,8"
                       ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+              <TreeView.ContextMenu>
+                <!-- Right-click selects the item first, so these act on SelectedNode. -->
+                <ContextMenu>
+                  <MenuItem Header="{Binding SelectedNode.Title}" IsEnabled="False" FontWeight="SemiBold" />
+                  <Separator />
+                  <MenuItem Header="Refresh" Command="{Binding RefreshSelectedCommand}">
+                    <MenuItem.Icon>
+                      <PathIcon Data="{x:Static app:Icons.Refresh}" Width="12" Height="12" />
+                    </MenuItem.Icon>
+                  </MenuItem>
+                  <Separator IsVisible="{Binding CanPurgeSelectedNode}" />
+                  <MenuItem Header="Purge active messages…" IsVisible="{Binding CanPurgeSelectedNode}"
+                            Command="{Binding PurgeSelectedCommand}" CommandParameter="{x:Static core:MessageSource.Active}">
+                    <MenuItem.Icon>
+                      <PathIcon Data="{x:Static app:Icons.Trash}" Width="12" Height="12" Foreground="{DynamicResource DangerBrush}" />
+                    </MenuItem.Icon>
+                  </MenuItem>
+                  <MenuItem Header="Purge dead-letter queue…" IsVisible="{Binding CanPurgeSelectedNode}"
+                            Command="{Binding PurgeSelectedCommand}" CommandParameter="{x:Static core:MessageSource.DeadLetter}">
+                    <MenuItem.Icon>
+                      <PathIcon Data="{x:Static app:Icons.Trash}" Width="12" Height="12" Foreground="{DynamicResource DangerBrush}" />
+                    </MenuItem.Icon>
+                  </MenuItem>
+                </ContextMenu>
+              </TreeView.ContextMenu>
               <TreeView.Styles>
                 <Style Selector="TreeViewItem" x:DataType="vm:TreeNodeViewModel">
                   <Setter Property="IsExpanded" Value="{Binding IsExpanded, Mode=TwoWay}" />
@@ -102,8 +147,10 @@
                     <Border Classes="pill" IsVisible="{Binding Badge, Converter={x:Static ObjectConverters.IsNotNull}}">
                       <TextBlock Text="{Binding Badge}" />
                     </Border>
-                    <Border Classes="pill alert" IsVisible="{Binding AlertBadge, Converter={x:Static ObjectConverters.IsNotNull}}">
-                      <TextBlock Text="{Binding AlertBadge}" />
+                    <Border Classes="pill" Classes.alert="{Binding HasDeadLetters}" Classes.muted="{Binding !HasDeadLetters}"
+                            ToolTip.Tip="Dead-lettered messages"
+                            IsVisible="{Binding DeadLetterBadge, Converter={x:Static ObjectConverters.IsNotNull}}">
+                      <TextBlock Text="{Binding DeadLetterBadge}" />
                     </Border>
                   </StackPanel>
                 </TreeDataTemplate>
@@ -297,7 +344,8 @@
                                 IsVisible="{Binding CanCancelScheduledHere}" ToolTip.Tip="Cancel the ticked scheduled messages" />
                         <Button Content="Delete deferred" Command="{Binding DeleteDeferredCommand}" Margin="0,2,4,2"
                                 ToolTip.Tip="Delete the ticked deferred messages" />
-                        <Button Classes="danger" Command="{Binding PurgeCommand}" Margin="0,2,0,2"
+                        <Rectangle Classes="divider" />
+                        <Button Classes="dangerSolid" Command="{Binding PurgeCommand}" Margin="0,2,0,2"
                                 ToolTip.Tip="Permanently delete every message in this sub-queue">
                           <StackPanel Orientation="Horizontal" Spacing="6">
                             <PathIcon Data="{x:Static app:Icons.Trash}" Width="12" Height="12" />
@@ -520,8 +568,10 @@
     <!-- ===================== Status bar ===================== -->
     <Border Grid.Row="1" Classes="statusbar">
       <DockPanel>
-        <TextBlock DockPanel.Dock="Right" Classes="muted" FontSize="11" VerticalAlignment="Center"
-                   Text="{Binding AppVersion, StringFormat='v{0}'}" />
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <Button Classes="subtle link" Content="Check for updates" Command="{Binding CheckForUpdatesCommand}" Padding="0" FontSize="11" />
+          <TextBlock Classes="muted" FontSize="11" VerticalAlignment="Center" Text="{Binding AppVersion, StringFormat='v{0}'}" />
+        </StackPanel>
         <StackPanel Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
           <ProgressBar IsIndeterminate="True" Width="80" Height="4" MinHeight="4" VerticalAlignment="Center"
                        IsVisible="{Binding CurrentEntity.IsBusy, FallbackValue=False}" />

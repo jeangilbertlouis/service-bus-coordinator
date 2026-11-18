@@ -11,12 +11,15 @@ and subscriptions, read messages, clear out queues, and send dead-lettered messa
   pile up.
 - **Read messages** without removing them, with a formatted body (JSON, XML, text) and all their properties.
 - **Fix dead-lettered messages**: resubmit some or all of them to the original queue or topic, or to another one.
-- **Purge** a queue or its dead-letter queue, with confirmation, progress and cancel.
+- **Purge** a queue or its dead-letter queue, with confirmation, progress and cancel, from the toolbar or by
+  right-clicking it in the tree (which also offers **Refresh**).
 - **Send** new messages, or edit and resend an existing one.
 - **Filter and export** messages to JSON.
 - **See entity settings**: lock duration, time-to-live, forwarding, subscription rules and more.
 - Works with **sessions**, **scheduled and deferred messages**, and the **local Service Bus emulator**.
 - Light and dark themes that follow your OS.
+- **Updates itself**: when a new version is released, click **Update and restart**. Set the environment variable
+  `SBC_DISABLE_UPDATE_CHECK=1` to stop the check on startup.
 
 ## Install
 
