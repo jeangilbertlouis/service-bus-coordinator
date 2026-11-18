@@ -129,9 +129,11 @@ public sealed class UpdateInstallerTests : IDisposable
         Assert.False(file.IsBundle);
         Assert.Equal("/opt/sbc/ServiceBusCoordinator", file.TargetPath);
 
-        var bundle = InstallLocation.Detect("/Applications/Service Bus Coordinator.app/Contents/MacOS/ServiceBusCoordinator", true)!;
+        // Built with Path.Combine so the expected path uses this OS's separator (Windows normalises '/' to '\').
+        var app = Path.Combine(Path.GetTempPath(), "Applications", "Service Bus Coordinator.app");
+        var bundle = InstallLocation.Detect(Path.Combine(app, "Contents", "MacOS", "ServiceBusCoordinator"), true)!;
         Assert.True(bundle.IsBundle);
-        Assert.Equal("/Applications/Service Bus Coordinator.app", bundle.TargetPath);
+        Assert.Equal(app, bundle.TargetPath);
     }
 
     [Fact]
