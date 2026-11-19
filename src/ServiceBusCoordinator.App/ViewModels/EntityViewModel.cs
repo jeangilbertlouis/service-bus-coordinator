@@ -20,7 +20,6 @@ public sealed record SourceOption(MessageSource Value, string Label)
 public sealed partial class EntityViewModel : ObservableObject
 {
     private const int PageSize = 50;
-    private const int TypeToConfirmThreshold = 100;
 
     private readonly EntityNodeViewModel _node;
     private readonly IDialogService _dialogs;
@@ -538,7 +537,7 @@ public sealed partial class EntityViewModel : ObservableObject
               + (Entity.RequiresSession ? " Sessions are purged one at a time." : "")
             : "";
         var message = $"Permanently delete {countText} from the {source.DisplayName()} of '{Entity.Path}'?{extra}\n\nThis cannot be undone.";
-        var requireTyping = count is null or > TypeToConfirmThreshold ? Entity.Name : null;
+        var requireTyping = count is null || count > _node.Namespace.Options.PurgeConfirmThreshold ? Entity.Name : null;
 
         if (!await _dialogs.ConfirmAsync("Purge messages", message, "Purge", requireTyping))
         {

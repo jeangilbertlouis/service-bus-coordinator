@@ -54,6 +54,16 @@ ServiceBusCoordinator.sln
   Nothing secret is ever written to disk in plain text.
 
 ### 3.2 Entity discovery
+* **Connections connect lazily** (unless *Connect at startup* is turned on in Options, §3.16). At startup every saved
+  connection is shown collapsed and nothing is contacted. A
+  connection connects and lists its entities the first time it is expanded (or via **Connect** on its overview,
+  Refresh, or Add entity). Until then it holds a "Connecting…" placeholder child so the tree shows an expander. A
+  failed attempt leaves a "Could not connect" placeholder; expanding again or **Try again** retries. A newly added
+  connection connects straight away. This keeps startup fast and quiet with many connections.
+* Each connection groups entities under **Queues** and **Topics** folders. A folder's pills show the total active and
+  dead-letter messages of the queues or subscriptions in it (not how many entities it holds); they update when an
+  entity is refreshed or purged. By default Queues starts expanded and Topics, and each topic, collapsed (Options);
+  Refresh keeps whatever the user has expanded or collapsed since.
 * `ServiceBusAdministrationClient.GetQueuesAsync / GetTopicsAsync / GetSubscriptionsAsync`
   plus `Get*RuntimePropertiesAsync` for active, dead-letter, scheduled and transfer-DLQ counts.
 * On `UnauthorizedAccessException` (no Manage claim) the namespace shows a "limited access" state
@@ -70,7 +80,9 @@ ServiceBusCoordinator.sln
   TTL, DeadLetterReason/ErrorDescription/Source) and application properties.
 
 ### 3.4 Purge
-* Confirmation dialog requiring the entity name to be typed for large purges.
+* Confirmation dialog requiring the entity name to be entered for large purges (more than 100 messages by default,
+  configurable in Options, or an unknown count). The name is shown with a **Copy** button so it can be pasted;
+  surrounding whitespace from a paste is ignored.
 * Drains the entity with a `ReceiveAndDelete` receiver in batches of 500; progress is reported as messages deleted. Cancellable.
 * Stops when the entity is empty or once it reaches messages enqueued after the purge started, so a busy
   entity cannot keep it looping forever.
@@ -164,7 +176,7 @@ ServiceBusCoordinator.sln
   (`/repos/jeangilbertlouis/service-bus-coordinator/releases/latest`; drafts and pre-releases are never offered) and
   compares its tag with the running version by SemVer precedence. A newer release shows a banner in the sidebar.
   Nothing else is sent: the only identifying header is `User-Agent: ServiceBusCoordinator/<version>`. Set
-  `SBC_DISABLE_UPDATE_CHECK=1` to skip the startup check.
+  `SBC_DISABLE_UPDATE_CHECK=1`, or untick *Check for updates when the app starts* in Options, to skip the startup check.
 * **Update and restart** downloads the package for the running RID next to the install, checks its SHA-256 against
   the release's `SHA256SUMS.txt` (written by CI), unpacks it, then **renames** the running executable (or `.app`
   bundle) to `*.old` and moves the new one into its place. Renaming a running file works on Windows, macOS and
@@ -200,6 +212,16 @@ ServiceBusCoordinator.sln
   non-zero). Toolbar actions are grouped with dividers and icons; the message list is a card with a header row and
   zebra rows; a status bar shows progress and the app version.
 * Icons are small vector paths in `Icons.cs` (no icon font or image assets).
+
+### 3.16 Options
+* **Options** (gear button in the sidebar toolbar, or the status bar link) holds the default behaviours: connect all
+  connections at startup (off), which of Queues / Topics / each topic start expanded (Queues only), the purge size
+  that asks for the entity name (100), and checking for updates at startup (on).
+* Stored as plain JSON (nothing secret) in `options.json` under the per-user application-data folder
+  (`%APPDATA%\ServiceBusCoordinator` on Windows, `~/.config/ServiceBusCoordinator` on Linux and macOS). A missing or
+  unreadable file means the defaults; unknown properties are ignored, so older and newer versions can share it.
+* `Core/Settings/AppOptions` is the model and store; one shared instance is handed to every connection, so tree
+  options apply the next time a connection loads.
 
 ## 4. Security
 * Connection strings only live in memory and in the OS secret store.

@@ -5,6 +5,7 @@ using ServiceBusCoordinator.App.Services;
 using ServiceBusCoordinator.Core;
 using ServiceBusCoordinator.Core.Connections;
 using ServiceBusCoordinator.Core.Models;
+using ServiceBusCoordinator.Core.Settings;
 using ServiceBusCoordinator.Core.Updates;
 
 namespace ServiceBusCoordinator.App.ViewModels;
@@ -13,6 +14,10 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 {
     private readonly IDialogService _dialogs;
     private ConnectionRepository _repository = new(new InMemorySecretStore());
+    private AppOptionsStore? _optionsStore;
+
+    /// <summary>The user's options. One shared instance, so connections see changes straight away.</summary>
+    public AppOptions Options { get; } = new();
 
     public MainWindowViewModel(IDialogService dialogs)
     {
@@ -66,6 +71,16 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 + SecretScrubber.Scrub(ex.Message);
         }
 
+        try
+        {
+            _optionsStore = AppOptionsStore.CreateDefault();
+            Options.CopyFrom(_optionsStore.Load());
+        }
+        catch (Exception)
+        {
+            // No writable settings folder: run with the defaults.
+        }
+
         IReadOnlyList<ConnectionProfile> profiles = [];
         try
         {
@@ -78,16 +93,23 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
         foreach (var profile in profiles)
         {
-            Namespaces.Add(new NamespaceNodeViewModel(profile));
+            Namespaces.Add(new NamespaceNodeViewModel(profile, Options));
         }
 
-        var loads = Task.WhenAll(Namespaces.Select(n => n.LoadAsync()));
-        if (UpdateService.StartupCheckEnabled)
+        // By default connections stay collapsed and unconnected until the user expands them, so many saved
+        // connections cost nothing at startup. The Options dialog can turn connecting at startup back on.
+        if (Options.ConnectOnStartup)
         {
-            _ = CheckForUpdatesCoreAsync(userAsked: false);
+            foreach (var ns in Namespaces)
+            {
+                ns.IsExpanded = true; // Expanding connects.
+            }
         }
 
-        await loads;
+        if (UpdateService.StartupCheckEnabled && Options.CheckForUpdatesOnStartup)
+        {
+            await CheckForUpdatesCoreAsync(userAsked: false);
+        }
     }
 
     partial void OnSelectedNodeChanged(TreeNodeViewModel? value)
@@ -112,11 +134,34 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
             return;
         }
 
-        var node = new NamespaceNodeViewModel(profile);
+        var node = new NamespaceNodeViewModel(profile, Options);
         Namespaces.Add(node);
         Save();
         SelectedNode = node;
+        node.IsExpanded = true; // A connection the user just added is connected straight away.
         await node.LoadAsync();
+    }
+
+    /// <summary>Opens the Options dialog and saves the result. Tree options apply to connections connected afterwards.</summary>
+    [RelayCommand]
+    private async Task EditOptionsAsync()
+    {
+        var edited = await _dialogs.EditOptionsAsync(Options.Clone());
+        if (edited is null)
+        {
+            return;
+        }
+
+        Options.CopyFrom(edited);
+        try
+        {
+            _optionsStore?.Save(Options);
+        }
+        catch (Exception ex)
+        {
+            await _dialogs.ShowMessageAsync("Options",
+                "Your options apply until you close the app, but could not be saved: " + SecretScrubber.Scrub(ex.Message));
+        }
     }
 
     [RelayCommand(CanExecute = nameof(HasNamespace))]
@@ -144,6 +189,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         if (SelectedNamespace is { } ns)
         {
             SelectedNode = ns;
+            ns.IsExpanded = true;
             await ns.LoadAsync();
         }
     }
@@ -220,6 +266,7 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
                 Save();
             }
 
+            ns.IsExpanded = true;
             await ns.LoadAsync();
             if (ns.LimitedAccessReason is not null || ns.Error is not null)
             {
