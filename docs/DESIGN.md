@@ -77,7 +77,9 @@ ServiceBusCoordinator.sln
   dead-letter messages of the queues or subscriptions in it (not how many entities it holds); they update when an
   entity is refreshed or purged. Each topic row likewise shows its subscriptions' active and dead-letter totals (the
   subscription count is in the pill's tooltip). A queue whose name ends in `_error` (an error-queue convention, configurable in
-  Options) shows its message count in red while it holds messages.
+  Options) shows its message count in red while it holds messages. The Queues folder adds a third pill with the total in its error
+  queues (`_error 29`, or `errors 29` with several endings), red while above zero; it is hidden when there are no error queues
+  or highlighting is off.
 * A connection's overview shows tiles for its entities, total **active** messages (queues and subscriptions),
   total **dead-lettered**, and messages **in error queues** with how many error queues there are (hidden when
   error-queue highlighting is off). Error-queue messages are also counted in the active total. By default Queues starts expanded and Topics, and each topic, collapsed (Options);

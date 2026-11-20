@@ -188,6 +188,11 @@
                             IsVisible="{Binding DeadLetterBadge, Converter={x:Static ObjectConverters.IsNotNull}}">
                       <TextBlock Text="{Binding DeadLetterBadge}" />
                     </Border>
+                    <Border Classes="pill" Classes.alert="{Binding IsErrorBadgeAlert}" Classes.muted="{Binding !IsErrorBadgeAlert}"
+                            ToolTip.Tip="{Binding ErrorBadgeTip}"
+                            IsVisible="{Binding ErrorBadge, Converter={x:Static ObjectConverters.IsNotNull}}">
+                      <TextBlock Text="{Binding ErrorBadge}" />
+                    </Border>
                   </StackPanel>
                 </TreeDataTemplate>
               </TreeView.DataTemplates>

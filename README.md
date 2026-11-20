@@ -18,7 +18,7 @@ and subscriptions, read messages, clear out queues, and send dead-lettered messa
 - **Filter and export** messages to JSON.
 - **See entity settings**: lock duration, time-to-live, forwarding, subscription rules and more.
 - Works with **sessions**, **scheduled and deferred messages**, and the **local Service Bus emulator**.
-- **Error queues stand out**: queues ending in `_error` show their message count in red when they hold messages.
+- **Error queues stand out**: queues ending in `_error` show their message count in red when they hold messages, and the Queues folder shows their total.
 - **Options** to choose the defaults: connect everything at startup, which folders start expanded, which queue names
   count as error queues, when a purge asks you to enter the name, and whether to check for updates.
 - Light and dark themes that follow your OS.

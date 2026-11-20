@@ -40,6 +40,16 @@ public abstract partial class TreeNodeViewModel : ObservableObject
     [ObservableProperty]
     public partial bool HasDeadLetters { get; set; }
 
+    /// <summary>Messages waiting in error queues below this node (e.g. the Queues folder); null when there are none to count.</summary>
+    [ObservableProperty]
+    public partial string? ErrorBadge { get; set; }
+
+    [ObservableProperty]
+    public partial bool IsErrorBadgeAlert { get; set; }
+
+    [ObservableProperty]
+    public partial string? ErrorBadgeTip { get; set; }
+
     /// <summary>Shows <see cref="Badge"/> in red, e.g. for messages waiting in an error queue.</summary>
     [ObservableProperty]
     public partial bool IsBadgeAlert { get; set; }
@@ -137,6 +147,9 @@ public sealed partial class FolderNodeViewModel(NamespaceNodeViewModel ns, strin
 
     public long TotalDeadLetters { get; private set; }
 
+    /// <summary>Active messages in the error queues under this folder (queues matching the Options suffixes).</summary>
+    public long TotalErrorMessages { get; private set; }
+
     public void Init()
     {
         Title = title;
@@ -149,7 +162,8 @@ public sealed partial class FolderNodeViewModel(NamespaceNodeViewModel ns, strin
     /// </summary>
     public void Recount()
     {
-        long active = 0, deadLetters = 0;
+        long active = 0, deadLetters = 0, errors = 0;
+        var errorQueues = 0;
         foreach (var node in Entities(Children))
         {
             if (node.Entity is { HasMessages: true, Counts: { } c })
@@ -157,13 +171,31 @@ public sealed partial class FolderNodeViewModel(NamespaceNodeViewModel ns, strin
                 active += c.Active;
                 deadLetters += c.DeadLetter;
             }
+
+            if (node.IsQueue && ns.Options.IsErrorQueue(node.Entity.Name))
+            {
+                errorQueues++;
+                errors += node.Entity.Counts?.Active ?? 0;
+            }
         }
+
+        TotalErrorMessages = errors;
+        ErrorBadge = errorQueues > 0 ? $"{ErrorLabel(ns.Options.ErrorQueueSuffixes)} {errors:N0}" : null;
+        IsErrorBadgeAlert = errors > 0;
+        ErrorBadgeTip = errorQueues == 1 ? "Messages in 1 error queue" : $"Messages across {errorQueues:N0} error queues";
 
         TotalActive = active;
         TotalDeadLetters = deadLetters;
         Badge = active.ToString("N0");
         DeadLetterBadge = $"DLQ {deadLetters:N0}";
         HasDeadLetters = deadLetters > 0;
+    }
+
+    /// <summary>"_error" for a single suffix, otherwise "errors".</summary>
+    private static string ErrorLabel(string? suffixes)
+    {
+        var list = (suffixes ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return list.Length == 1 ? list[0] : "errors";
     }
 
     private static IEnumerable<EntityNodeViewModel> Entities(IEnumerable<TreeNodeViewModel> nodes)
@@ -500,6 +532,11 @@ public sealed partial class NamespaceNodeViewModel : TreeNodeViewModel, IAsyncDi
         foreach (var node in Children.SelectMany(c => c.Children.Concat(c.Children.SelectMany(t => t.Children))).OfType<EntityNodeViewModel>())
         {
             node.UpdateErrorHighlight();
+        }
+
+        foreach (var folder in Children.OfType<FolderNodeViewModel>())
+        {
+            folder.Recount();
         }
 
         UpdateTotals();
