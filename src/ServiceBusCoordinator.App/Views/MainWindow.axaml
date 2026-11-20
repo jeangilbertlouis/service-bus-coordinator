@@ -42,7 +42,7 @@
               <Button Grid.Column="2" Command="{Binding RefreshNamespaceCommand}" ToolTip.Tip="Reload the selected namespace">
                 <PathIcon Data="{x:Static app:Icons.Refresh}" />
               </Button>
-              <Button Grid.Column="3" Classes="danger" Command="{Binding RemoveConnectionCommand}" ToolTip.Tip="Remove the selected connection">
+              <Button Grid.Column="3" Classes="danger" Command="{Binding RemoveConnectionCommand}" ToolTip.Tip="Remove the selected connection or folder">
                 <PathIcon Data="{x:Static app:Icons.Trash}" />
               </Button>
               <Button Grid.Column="4" Command="{Binding EditOptionsCommand}" ToolTip.Tip="Options">
@@ -74,21 +74,41 @@
               <TextBlock Text="{Binding StorageWarning}" TextWrapping="Wrap" FontSize="12" />
             </Border>
 
-            <TextBlock Classes="section" Text="NAMESPACES" Margin="2,4,0,-6" />
+            <Grid ColumnDefinitions="*,Auto" Margin="2,4,0,-6">
+              <TextBlock Classes="section" Text="NAMESPACES" VerticalAlignment="Center" />
+              <Button Grid.Column="1" Classes="subtle" Padding="5,3" Command="{Binding NewFolderCommand}"
+                      ToolTip.Tip="New folder for grouping connections. Drag connections onto it, and drag to reorder.">
+                <StackPanel Orientation="Horizontal" Spacing="5">
+                  <PathIcon Data="{x:Static app:Icons.NewFolder}" Width="13" Height="13" />
+                  <TextBlock Text="New folder" FontSize="11" VerticalAlignment="Center" />
+                </StackPanel>
+              </Button>
+            </Grid>
           </StackPanel>
 
           <Panel>
             <TextBlock Classes="muted" TextWrapping="Wrap" Margin="16,4" FontSize="12"
                        IsVisible="{Binding HasNoConnections}"
                        Text="No connections yet. Click 'Add connection' and paste a Service Bus connection string." />
-            <TreeView x:Name="NavTree" Classes="nav" ItemsSource="{Binding Namespaces}" SelectedItem="{Binding SelectedNode}" Margin="4,0,4,8"
+            <TreeView x:Name="NavTree" Classes="nav" ItemsSource="{Binding RootNodes}" SelectedItem="{Binding SelectedNode}" Margin="4,0,4,8"
                       ScrollViewer.HorizontalScrollBarVisibility="Disabled">
               <TreeView.ContextMenu>
                 <!-- Right-click selects the item first, so these act on SelectedNode. -->
                 <ContextMenu>
                   <MenuItem Header="{Binding SelectedNode.Title}" IsEnabled="False" FontWeight="SemiBold" />
                   <Separator />
-                  <MenuItem Header="Refresh" Command="{Binding RefreshSelectedCommand}">
+                  <MenuItem Header="New folder…" Command="{Binding NewFolderCommand}">
+                    <MenuItem.Icon>
+                      <PathIcon Data="{x:Static app:Icons.NewFolder}" Width="12" Height="12" />
+                    </MenuItem.Icon>
+                  </MenuItem>
+                  <MenuItem Header="Rename folder…" Command="{Binding RenameFolderCommand}" IsVisible="{Binding IsFolderSelected}" />
+                  <MenuItem Header="Delete folder" Command="{Binding RemoveConnectionCommand}" IsVisible="{Binding IsFolderSelected}">
+                    <MenuItem.Icon>
+                      <PathIcon Data="{x:Static app:Icons.Trash}" Width="12" Height="12" Foreground="{DynamicResource DangerBrush}" />
+                    </MenuItem.Icon>
+                  </MenuItem>
+                  <MenuItem Header="Refresh" Command="{Binding RefreshSelectedCommand}" IsVisible="{Binding !IsFolderSelected}">
                     <MenuItem.Icon>
                       <PathIcon Data="{x:Static app:Icons.Refresh}" Width="12" Height="12" />
                     </MenuItem.Icon>
@@ -141,6 +161,15 @@
                     </StackPanel>
                   </Grid>
                 </TreeDataTemplate>
+                <TreeDataTemplate DataType="vm:ConnectionFolderNodeViewModel" ItemsSource="{Binding Children}">
+                  <StackPanel Orientation="Horizontal" Spacing="8" Margin="0,3">
+                    <PathIcon Classes="folder" Data="{Binding Icon}" Width="15" Height="15" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding Title}" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    <Border Classes="pill muted" ToolTip.Tip="Connections in this folder">
+                      <TextBlock Text="{Binding Badge}" />
+                    </Border>
+                  </StackPanel>
+                </TreeDataTemplate>
                 <TreeDataTemplate DataType="vm:PlaceholderNodeViewModel">
                   <TextBlock Text="{Binding Text}" Classes="muted" FontSize="12" FontStyle="Italic" Margin="0,2" TextTrimming="CharacterEllipsis" />
                 </TreeDataTemplate>
@@ -150,7 +179,8 @@
                               Classes.queue="{Binding IsQueue}" Classes.topic="{Binding IsTopic}"
                               Classes.subscription="{Binding IsSubscription}" Classes.folder="{Binding IsFolder}" />
                     <TextBlock Text="{Binding Title}" VerticalAlignment="Center" />
-                    <Border Classes="pill" IsVisible="{Binding Badge, Converter={x:Static ObjectConverters.IsNotNull}}">
+                    <Border Classes="pill" Classes.alert="{Binding IsBadgeAlert}" ToolTip.Tip="{Binding BadgeTip}"
+                            IsVisible="{Binding Badge, Converter={x:Static ObjectConverters.IsNotNull}}">
                       <TextBlock Text="{Binding Badge}" />
                     </Border>
                     <Border Classes="pill" Classes.alert="{Binding HasDeadLetters}" Classes.muted="{Binding !HasDeadLetters}"
@@ -162,6 +192,12 @@
                 </TreeDataTemplate>
               </TreeView.DataTemplates>
             </TreeView>
+            <!-- Drag-and-drop feedback, drawn over the tree (see MainWindow.axaml.cs). -->
+            <Canvas x:Name="DropOverlay" IsHitTestVisible="False">
+              <Border x:Name="DropLine" Height="2" CornerRadius="1" Background="{DynamicResource AccentBrush}" IsVisible="False" />
+              <Border x:Name="DropBox" CornerRadius="6" BorderBrush="{DynamicResource AccentBrush}"
+                      BorderThickness="2" IsVisible="False" />
+            </Canvas>
           </Panel>
         </DockPanel>
       </Border>
@@ -194,8 +230,30 @@
         <Panel IsVisible="{Binding !HasEntity}">
           <StackPanel IsVisible="{Binding !HasNoConnections}">
             <TextBlock Classes="muted" Margin="0,60,0,0" HorizontalAlignment="Center"
-                       IsVisible="{Binding SelectedNamespace, Converter={x:Static ObjectConverters.IsNull}}"
+                       IsVisible="{Binding SelectedNode, Converter={x:Static ObjectConverters.IsNull}}"
                        Text="Select a namespace, queue, topic or subscription on the left." />
+
+            <StackPanel Spacing="14" IsVisible="{Binding IsFolderSelected}">
+              <Grid ColumnDefinitions="Auto,*">
+                <Border Width="44" Height="44" CornerRadius="10" Background="{DynamicResource AccentSoftBrush}">
+                  <PathIcon Classes="folder" Data="{x:Static app:Icons.Folder}" Width="22" Height="22" />
+                </Border>
+                <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center" Spacing="2">
+                  <StackPanel Orientation="Horizontal" Spacing="8">
+                    <TextBlock Classes="h1" Text="{Binding SelectedFolder.Title, FallbackValue=''}" />
+                    <Border Classes="pill" VerticalAlignment="Center"><TextBlock Text="Folder" /></Border>
+                  </StackPanel>
+                  <TextBlock Classes="muted" Text="{Binding SelectedFolder.Badge, StringFormat='{}{0} connection(s)', FallbackValue=''}" />
+                </StackPanel>
+              </Grid>
+              <TextBlock Classes="muted" TextWrapping="Wrap"
+                         Text="Drag connections onto this folder to file them here, or drag them out again. Drag folders and connections up or down to change their order." />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Content="Rename…" Command="{Binding RenameFolderCommand}" />
+                <Button Classes="danger" Content="Delete folder" Command="{Binding RemoveConnectionCommand}"
+                        ToolTip.Tip="Removes the folder only; its connections move to the top level" />
+              </StackPanel>
+            </StackPanel>
 
             <StackPanel Spacing="14" IsVisible="{Binding SelectedNamespace, Converter={x:Static ObjectConverters.IsNotNull}}">
               <Grid ColumnDefinitions="Auto,*">
@@ -230,10 +288,26 @@
                     <TextBlock Text="{Binding SelectedNamespace.Summary}" FontSize="15" FontWeight="SemiBold" />
                   </StackPanel>
                 </Border>
+                <Border Classes="stat">
+                  <StackPanel Spacing="2">
+                    <TextBlock Classes="section" Text="ACTIVE" />
+                    <TextBlock Classes="statValue" Text="{Binding SelectedNamespace.TotalActive, StringFormat={}{0:N0}}" />
+                    <TextBlock Classes="muted" FontSize="11" Text="across queues and subscriptions" />
+                  </StackPanel>
+                </Border>
                 <Border Classes="stat" Classes.alert="{Binding SelectedNamespace.AlertBadge, Converter={x:Static ObjectConverters.IsNotNull}}">
                   <StackPanel Spacing="2">
                     <TextBlock Classes="section" Text="DEAD-LETTERED" />
                     <TextBlock Classes="statValue" Text="{Binding SelectedNamespace.TotalDeadLetters, StringFormat={}{0:N0}}" />
+                    <TextBlock Classes="muted" FontSize="11" Text="in dead-letter queues" />
+                  </StackPanel>
+                </Border>
+                <Border Classes="stat" Classes.alert="{Binding SelectedNamespace.HasErrorMessages, FallbackValue=False}"
+                        IsVisible="{Binding SelectedNamespace.ShowErrorQueues, FallbackValue=False}">
+                  <StackPanel Spacing="2">
+                    <TextBlock Classes="section" Text="IN ERROR QUEUES" />
+                    <TextBlock Classes="statValue" Text="{Binding SelectedNamespace.TotalErrorMessages, StringFormat={}{0:N0}}" />
+                    <TextBlock Classes="muted" FontSize="11" Text="{Binding SelectedNamespace.ErrorQueueSummary}" />
                   </StackPanel>
                 </Border>
               </WrapPanel>
@@ -250,7 +324,25 @@
 
             <!-- Header -->
             <StackPanel DockPanel.Dock="Top" Spacing="14" Margin="0,0,0,6">
-              <Grid ColumnDefinitions="Auto,*">
+              <Grid ColumnDefinitions="Auto,*,Auto">
+                <!-- Large purge buttons that don't depend on the sub-queue picked in the Messages tab. -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="12,0,0,0"
+                            IsVisible="{Binding HasMessages}">
+                  <Button Classes="dangerSolid large" Command="{Binding PurgeActiveCommand}"
+                          ToolTip.Tip="Permanently delete every active message (and deferred and scheduled ones)">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                      <PathIcon Data="{x:Static app:Icons.Trash}" Width="15" Height="15" />
+                      <TextBlock Text="Purge messages" />
+                    </StackPanel>
+                  </Button>
+                  <Button Classes="dangerSolid large" Command="{Binding PurgeDeadLetterCommand}"
+                          ToolTip.Tip="Permanently delete every message in the dead-letter queue">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                      <PathIcon Data="{x:Static app:Icons.Trash}" Width="15" Height="15" />
+                      <TextBlock Text="Purge DLQ" />
+                    </StackPanel>
+                  </Button>
+                </StackPanel>
                 <Border Width="44" Height="44" CornerRadius="10" Background="{DynamicResource AccentSoftBrush}">
                   <PathIcon Data="{Binding Icon}" Width="22" Height="22"
                             Classes.queue="{Binding IsQueue}" Classes.topic="{Binding IsTopic}" Classes.subscription="{Binding IsSubscription}" />

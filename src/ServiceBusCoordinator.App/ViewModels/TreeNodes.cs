@@ -10,6 +10,16 @@ using ServiceBusCoordinator.Core.Settings;
 
 namespace ServiceBusCoordinator.App.ViewModels;
 
+public enum DropPlacement
+{
+    Before,
+    After,
+    Into,
+}
+
+/// <summary>Where a dragged connection or folder lands: before or after a node, or into a folder.</summary>
+public sealed record DropTarget(TreeNodeViewModel Node, DropPlacement Placement);
+
 public abstract partial class TreeNodeViewModel : ObservableObject
 {
     [ObservableProperty]
@@ -30,6 +40,13 @@ public abstract partial class TreeNodeViewModel : ObservableObject
     [ObservableProperty]
     public partial bool HasDeadLetters { get; set; }
 
+    /// <summary>Shows <see cref="Badge"/> in red, e.g. for messages waiting in an error queue.</summary>
+    [ObservableProperty]
+    public partial bool IsBadgeAlert { get; set; }
+
+    [ObservableProperty]
+    public partial string? BadgeTip { get; set; }
+
     [ObservableProperty]
     public partial bool IsExpanded { get; set; }
 
@@ -41,7 +58,8 @@ public abstract partial class TreeNodeViewModel : ObservableObject
 
     public ObservableCollection<TreeNodeViewModel> Children { get; } = [];
 
-    public abstract NamespaceNodeViewModel Namespace { get; }
+    /// <summary>The connection this node belongs to; null for a sidebar folder of connections.</summary>
+    public abstract NamespaceNodeViewModel? Namespace { get; }
 
     public abstract Geometry Icon { get; }
 
@@ -52,6 +70,46 @@ public abstract partial class TreeNodeViewModel : ObservableObject
     public virtual bool IsSubscription => false;
 
     public virtual bool IsFolder => false;
+}
+
+/// <summary>A sidebar folder grouping connections. Holds only <see cref="NamespaceNodeViewModel"/> children.</summary>
+public sealed partial class ConnectionFolderNodeViewModel : TreeNodeViewModel
+{
+    public ConnectionFolderNodeViewModel(ConnectionFolder folder)
+    {
+        Folder = folder;
+        Title = folder.Name;
+        IsExpanded = folder.IsExpanded;
+        Children.CollectionChanged += (_, _) => UpdateBadge();
+        UpdateBadge();
+    }
+
+    public ConnectionFolder Folder { get; }
+
+    public override NamespaceNodeViewModel? Namespace => null;
+
+    public override Geometry Icon => Icons.Folder;
+
+    public override bool IsFolder => true;
+
+    public IEnumerable<NamespaceNodeViewModel> Connections => Children.OfType<NamespaceNodeViewModel>();
+
+    /// <summary>Raised when the user expands or collapses the folder, so the choice can be saved.</summary>
+    public event Action? ExpansionChanged;
+
+    protected override void OnExpandedChanged(bool expanded)
+    {
+        Folder.IsExpanded = expanded;
+        ExpansionChanged?.Invoke();
+    }
+
+    public void Rename(string name)
+    {
+        Folder.Name = name;
+        Title = name;
+    }
+
+    private void UpdateBadge() => Badge = Children.Count.ToString("N0");
 }
 
 /// <summary>
@@ -140,8 +198,51 @@ public sealed partial class EntityNodeViewModel : TreeNodeViewModel
 
     public override NamespaceNodeViewModel Namespace => _ns;
 
+    /// <summary>
+    /// Red count for a queue whose name marks it as an error queue (e.g. <c>orders_error</c>) while it holds messages,
+    /// as set in Options.
+    /// </summary>
+    public void UpdateErrorHighlight()
+    {
+        var isErrorQueue = Entity.Kind == EntityKind.Queue && _ns.Options.IsErrorQueue(Entity.Name);
+        IsBadgeAlert = isErrorQueue && Entity.Counts is { Active: > 0 };
+        BadgeTip = isErrorQueue ? "Messages in this error queue" : "Active messages";
+    }
+
     /// <summary>The Queues or Topics folder above this entity, whose totals include it.</summary>
     public FolderNodeViewModel? Folder { get; init; }
+
+    /// <summary>For a subscription, the topic row above it, whose totals include it.</summary>
+    public EntityNodeViewModel? ParentTopic { get; init; }
+
+    /// <summary>
+    /// A topic holds no messages itself, so its row shows the active and dead-letter totals of its subscriptions,
+    /// like a queue's row.
+    /// </summary>
+    public void UpdateTopicTotals()
+    {
+        if (!IsTopic)
+        {
+            return;
+        }
+
+        long active = 0, deadLetters = 0;
+        var subscriptions = 0;
+        foreach (var sub in Children.OfType<EntityNodeViewModel>())
+        {
+            subscriptions++;
+            if (sub.Entity.Counts is { } c)
+            {
+                active += c.Active;
+                deadLetters += c.DeadLetter;
+            }
+        }
+
+        Badge = active.ToString("N0");
+        BadgeTip = $"Active messages across {(subscriptions == 1 ? "1 subscription" : $"{subscriptions:N0} subscriptions")}";
+        DeadLetterBadge = $"DLQ {deadLetters:N0}";
+        HasDeadLetters = deadLetters > 0;
+    }
 
     public override Geometry Icon => Entity.Kind switch
     {
@@ -170,6 +271,10 @@ public sealed partial class EntityNodeViewModel : TreeNodeViewModel
             DeadLetterBadge = null;
             HasDeadLetters = false;
         }
+
+        UpdateErrorHighlight();
+        UpdateTopicTotals();
+        ParentTopic?.UpdateTopicTotals();
 
         // After a refresh or purge, keep the folder and connection totals in step.
         if (Folder is not null)
@@ -245,6 +350,25 @@ public sealed partial class NamespaceNodeViewModel : TreeNodeViewModel, IAsyncDi
 
     [ObservableProperty]
     public partial long TotalDeadLetters { get; set; }
+
+    /// <summary>Active messages across all queues and subscriptions.</summary>
+    [ObservableProperty]
+    public partial long TotalActive { get; set; }
+
+    /// <summary>Active messages across the error queues (names ending in <c>_error</c> by default, see Options).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(HasErrorMessages))]
+    public partial long TotalErrorMessages { get; set; }
+
+    public bool HasErrorMessages => TotalErrorMessages > 0;
+
+    /// <summary>"in 3 error queues", or why there are none.</summary>
+    [ObservableProperty]
+    public partial string? ErrorQueueSummary { get; set; }
+
+    /// <summary>Whether the overview shows the error-queue total (error-queue highlighting is on in Options).</summary>
+    [ObservableProperty]
+    public partial bool ShowErrorQueues { get; set; }
 
     /// <summary>All queues and topics, for picking a resubmit or send target.</summary>
     public IReadOnlyList<EntityInfo> SendableEntities =>
@@ -332,10 +456,10 @@ public sealed partial class NamespaceNodeViewModel : TreeNodeViewModel, IAsyncDi
             var topicNode = new EntityNodeViewModel(this, t.Topic) { Folder = topics, IsExpanded = firstLoad ? Options.ExpandTopics : openTopics.Contains(t.Topic.Name) };
             foreach (var s in t.Subscriptions)
             {
-                topicNode.Children.Add(new EntityNodeViewModel(this, s) { Folder = topics });
+                topicNode.Children.Add(new EntityNodeViewModel(this, s) { Folder = topics, ParentTopic = topicNode });
             }
 
-            topicNode.Badge = t.Subscriptions.Count == 1 ? "1 sub" : $"{t.Subscriptions.Count} subs";
+            topicNode.UpdateTopicTotals();
             topics.Children.Add(topicNode);
         }
 
@@ -352,8 +476,33 @@ public sealed partial class NamespaceNodeViewModel : TreeNodeViewModel, IAsyncDi
     /// <summary>Recomputes the connection's dead-letter total from its folders.</summary>
     internal void UpdateTotals()
     {
-        TotalDeadLetters = Children.OfType<FolderNodeViewModel>().Sum(f => f.TotalDeadLetters);
+        var folders = Children.OfType<FolderNodeViewModel>().ToList();
+        TotalDeadLetters = folders.Sum(f => f.TotalDeadLetters);
+        TotalActive = folders.Sum(f => f.TotalActive);
         AlertBadge = TotalDeadLetters > 0 ? $"DLQ {TotalDeadLetters:N0}" : null;
+
+        var errorQueues = folders.SelectMany(f => f.Children).OfType<EntityNodeViewModel>()
+            .Where(n => n.IsQueue && Options.IsErrorQueue(n.Entity.Name))
+            .ToList();
+        TotalErrorMessages = errorQueues.Sum(n => n.Entity.Counts?.Active ?? 0);
+        ShowErrorQueues = Options.HighlightErrorQueues;
+        ErrorQueueSummary = errorQueues.Count switch
+        {
+            0 => $"No queues ending in {Options.ErrorQueueSuffixes}",
+            1 => "in 1 error queue",
+            var n => $"in {n:N0} error queues",
+        };
+    }
+
+    /// <summary>Re-applies display options (such as error-queue highlighting) to the loaded entities.</summary>
+    public void ApplyOptions()
+    {
+        foreach (var node in Children.SelectMany(c => c.Children.Concat(c.Children.SelectMany(t => t.Children))).OfType<EntityNodeViewModel>())
+        {
+            node.UpdateErrorHighlight();
+        }
+
+        UpdateTotals();
     }
 
     private static string Plural(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n:N0} {noun}s";

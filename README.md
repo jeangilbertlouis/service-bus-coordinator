@@ -7,6 +7,7 @@ and subscriptions, read messages, clear out queues, and send dead-lettered messa
 
 - **Connect to several namespaces at once** by pasting a connection string. Connection strings are kept in your
   operating system's secure storage, never in a plain file.
+- **Organise connections in folders**, and drag connections and folders to file them or change their order.
 - **Browse queues, topics and subscriptions** with live message counts and a clear warning when dead-letter messages
   pile up. Connections only connect when you expand them, so the app opens instantly even with a long list of saved connections.
 - **Read messages** without removing them, with a formatted body (JSON, XML, text) and all their properties.
@@ -17,8 +18,9 @@ and subscriptions, read messages, clear out queues, and send dead-lettered messa
 - **Filter and export** messages to JSON.
 - **See entity settings**: lock duration, time-to-live, forwarding, subscription rules and more.
 - Works with **sessions**, **scheduled and deferred messages**, and the **local Service Bus emulator**.
-- **Options** to choose the defaults: connect everything at startup, which folders start expanded, when a purge asks
-  you to enter the name, and whether to check for updates.
+- **Error queues stand out**: queues ending in `_error` show their message count in red when they hold messages.
+- **Options** to choose the defaults: connect everything at startup, which folders start expanded, which queue names
+  count as error queues, when a purge asks you to enter the name, and whether to check for updates.
 - Light and dark themes that follow your OS.
 - **Updates itself**: when a new version is released, click **Update and restart**. Set the environment variable
   `SBC_DISABLE_UPDATE_CHECK=1` to stop the check on startup.

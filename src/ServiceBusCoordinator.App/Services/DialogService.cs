@@ -74,13 +74,18 @@ public sealed class DialogService(Window owner) : IDialogService
         return result;
     }
 
-    public async Task<string?> PromptAsync(string title, string message, string watermark)
+    public async Task<string?> PromptAsync(string title, string message, string watermark, string? initialValue = null)
     {
-        var input = new TextBox { PlaceholderText = watermark };
+        var input = new TextBox { PlaceholderText = watermark, Text = initialValue };
         string? result = null;
         var dialog = BuildDialog(title, 480, out var ok, out var body, "OK");
         body.Children.Add(Text(message));
         body.Children.Add(input);
+        dialog.Opened += (_, _) =>
+        {
+            input.Focus();
+            input.SelectAll();
+        };
         ok.Click += (_, _) =>
         {
             result = input.Text;
@@ -414,6 +419,16 @@ public sealed class DialogService(Window owner) : IDialogService
             HorizontalAlignment = HorizontalAlignment.Left,
         };
         var checkUpdates = Check("Check for updates when the app starts", options.CheckForUpdatesOnStartup);
+        var highlightErrors = Check("Show the message count of error queues in red", options.HighlightErrorQueues);
+        var errorSuffixes = new TextBox
+        {
+            Text = options.ErrorQueueSuffixes,
+            PlaceholderText = AppOptions.DefaultErrorQueueSuffixes,
+            Width = 220,
+            HorizontalAlignment = HorizontalAlignment.Left,
+            IsEnabled = options.HighlightErrorQueues,
+        };
+        highlightErrors.IsCheckedChanged += (_, _) => errorSuffixes.IsEnabled = highlightErrors.IsChecked == true;
 
         AppOptions? result = null;
         var dialog = BuildDialog("Options", 520, out var ok, out var body, "Save");
@@ -429,6 +444,17 @@ public sealed class DialogService(Window owner) : IDialogService
         body.Children.Add(expandTopicsFolder);
         body.Children.Add(expandTopics);
         body.Children.Add(Muted("Refresh keeps whatever you have expanded or collapsed since."));
+
+        body.Children.Add(Section("Error queues"));
+        body.Children.Add(highlightErrors);
+        body.Children.Add(new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Margin = new Thickness(28, 0, 0, 0),
+            Children = { new TextBlock { Text = "Queue names ending in", VerticalAlignment = VerticalAlignment.Center }, errorSuffixes },
+        });
+        body.Children.Add(Muted("Separate several endings with commas, e.g. _error, -dlq. Only queues that hold messages turn red."));
 
         body.Children.Add(Section("Purging"));
         body.Children.Add(Text("Ask me to enter the queue or subscription name when purging more than"));
@@ -453,6 +479,8 @@ public sealed class DialogService(Window owner) : IDialogService
                 ExpandTopics = expandTopics.IsChecked == true,
                 PurgeConfirmThreshold = (int)Math.Clamp(threshold.Value ?? AppOptions.DefaultPurgeConfirmThreshold, 0, 10_000_000),
                 CheckForUpdatesOnStartup = checkUpdates.IsChecked == true,
+                HighlightErrorQueues = highlightErrors.IsChecked == true,
+                ErrorQueueSuffixes = string.IsNullOrWhiteSpace(errorSuffixes.Text) ? AppOptions.DefaultErrorQueueSuffixes : errorSuffixes.Text.Trim(),
             };
             dialog.Close();
         };

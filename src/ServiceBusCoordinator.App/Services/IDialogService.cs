@@ -15,7 +15,7 @@ public interface IDialogService
 {
     Task<ConnectionProfile?> AddConnectionAsync();
 
-    Task<string?> PromptAsync(string title, string message, string watermark);
+    Task<string?> PromptAsync(string title, string message, string watermark, string? initialValue = null);
 
     /// <summary>Asks for confirmation. When <paramref name="typeToConfirm"/> is set the user must type it exactly.</summary>
     Task<bool> ConfirmAsync(string title, string message, string confirmLabel, string? typeToConfirm = null);

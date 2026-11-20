@@ -7,6 +7,8 @@ public sealed class AppOptions
 {
     public const int DefaultPurgeConfirmThreshold = 100;
 
+    public const string DefaultErrorQueueSuffixes = "_error";
+
     /// <summary>Expand and connect every saved connection when the app starts. Off by default, so many connections cost nothing.</summary>
     public bool ConnectOnStartup { get; set; }
 
@@ -22,6 +24,18 @@ public sealed class AppOptions
     /// <summary>Purges of more messages than this (or of an unknown number) ask for the entity name to be entered.</summary>
     public int PurgeConfirmThreshold { get; set; } = DefaultPurgeConfirmThreshold;
 
+    /// <summary>Show the message count of error queues (see <see cref="ErrorQueueSuffixes"/>) in red when they hold messages.</summary>
+    public bool HighlightErrorQueues { get; set; } = true;
+
+    /// <summary>Comma-separated name endings that mark a queue as an error queue, matched case-insensitively.</summary>
+    public string ErrorQueueSuffixes { get; set; } = DefaultErrorQueueSuffixes;
+
+    /// <summary>Whether a queue with this name is an error queue whose messages should stand out.</summary>
+    public bool IsErrorQueue(string queueName) =>
+        HighlightErrorQueues
+        && (ErrorQueueSuffixes ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Any(suffix => queueName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase));
+
     /// <summary>Look for a newer release when the app starts.</summary>
     public bool CheckForUpdatesOnStartup { get; set; } = true;
 
@@ -35,6 +49,8 @@ public sealed class AppOptions
         ExpandTopics = other.ExpandTopics;
         PurgeConfirmThreshold = Math.Max(0, other.PurgeConfirmThreshold);
         CheckForUpdatesOnStartup = other.CheckForUpdatesOnStartup;
+        HighlightErrorQueues = other.HighlightErrorQueues;
+        ErrorQueueSuffixes = other.ErrorQueueSuffixes?.Trim() ?? "";
     }
 }
 
