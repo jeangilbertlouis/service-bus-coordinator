@@ -27,7 +27,7 @@
               </StackPanel>
             </StackPanel>
 
-            <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="4">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="4">
               <Button Grid.Column="0" Classes="accent" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
                       Command="{Binding AddConnectionCommand}" ToolTip.Tip="Add a namespace using a connection string">
                 <StackPanel Orientation="Horizontal" Spacing="6">
@@ -44,6 +44,9 @@
               </Button>
               <Button Grid.Column="3" Classes="danger" Command="{Binding RemoveConnectionCommand}" ToolTip.Tip="Remove the selected connection">
                 <PathIcon Data="{x:Static app:Icons.Trash}" />
+              </Button>
+              <Button Grid.Column="4" Command="{Binding EditOptionsCommand}" ToolTip.Tip="Options">
+                <PathIcon Data="{x:Static app:Icons.Settings}" />
               </Button>
             </Grid>
 
@@ -138,6 +141,9 @@
                     </StackPanel>
                   </Grid>
                 </TreeDataTemplate>
+                <TreeDataTemplate DataType="vm:PlaceholderNodeViewModel">
+                  <TextBlock Text="{Binding Text}" Classes="muted" FontSize="12" FontStyle="Italic" Margin="0,2" TextTrimming="CharacterEllipsis" />
+                </TreeDataTemplate>
                 <TreeDataTemplate DataType="vm:TreeNodeViewModel" ItemsSource="{Binding Children}">
                   <StackPanel Orientation="Horizontal" Spacing="7">
                     <PathIcon Data="{Binding Icon}" VerticalAlignment="Center"
@@ -205,7 +211,11 @@
                 </StackPanel>
               </Grid>
 
-              <TextBlock Text="Loading entities…" Classes="muted" IsVisible="{Binding SelectedNamespace.IsLoading}" />
+              <StackPanel Orientation="Horizontal" Spacing="12" IsVisible="{Binding SelectedNamespace.CanConnect, FallbackValue=False}">
+                <TextBlock Classes="muted" VerticalAlignment="Center" Text="{Binding SelectedNamespace.ConnectPrompt}" />
+                <Button Classes="accent" Content="{Binding SelectedNamespace.ConnectLabel}" Command="{Binding SelectedNamespace.ConnectCommand}" />
+              </StackPanel>
+              <TextBlock Text="Connecting and loading entities…" Classes="muted" IsVisible="{Binding SelectedNamespace.IsLoading}" />
               <Border Classes="danger" IsVisible="{Binding SelectedNamespace.Error, Converter={x:Static ObjectConverters.IsNotNull}}">
                 <TextBlock Text="{Binding SelectedNamespace.Error}" TextWrapping="Wrap" />
               </Border>
@@ -228,7 +238,8 @@
                 </Border>
               </WrapPanel>
 
-              <TextBlock Classes="muted" Text="Select a queue, topic or subscription to see its messages and properties." />
+              <TextBlock Classes="muted" Text="Select a queue, topic or subscription to see its messages and properties."
+                         IsVisible="{Binding SelectedNamespace.IsConnected, FallbackValue=False}" />
             </StackPanel>
           </StackPanel>
         </Panel>
@@ -569,6 +580,7 @@
     <Border Grid.Row="1" Classes="statusbar">
       <DockPanel>
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <Button Classes="subtle link" Content="Options" Command="{Binding EditOptionsCommand}" Padding="0" FontSize="11" />
           <Button Classes="subtle link" Content="Check for updates" Command="{Binding CheckForUpdatesCommand}" Padding="0" FontSize="11" />
           <TextBlock Classes="muted" FontSize="11" VerticalAlignment="Center" Text="{Binding AppVersion, StringFormat='v{0}'}" />
         </StackPanel>

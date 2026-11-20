@@ -1,6 +1,7 @@
 using ServiceBusCoordinator.Core.Connections;
 using ServiceBusCoordinator.Core.Messages;
 using ServiceBusCoordinator.Core.Models;
+using ServiceBusCoordinator.Core.Settings;
 
 namespace ServiceBusCoordinator.App.Services;
 
@@ -27,6 +28,9 @@ public interface IDialogService
     Task<Stream?> SaveJsonFileAsync(string title, string suggestedFileName);
 
     Task ShowMessageAsync(string title, string message);
+
+    /// <summary>Shows the Options dialog for a copy of the options. Returns the edited copy, or null when cancelled.</summary>
+    Task<AppOptions?> EditOptionsAsync(AppOptions options);
 
     /// <summary>Opens a web page in the user's browser.</summary>
     Task OpenUrlAsync(Uri url);

@@ -1,10 +1,12 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input.Platform;
 using Avalonia.Layout;
 using Avalonia.Media;
 using ServiceBusCoordinator.Core.Connections;
 using ServiceBusCoordinator.Core.Messages;
 using ServiceBusCoordinator.Core.Models;
+using ServiceBusCoordinator.Core.Settings;
 
 namespace ServiceBusCoordinator.App.Services;
 
@@ -97,11 +99,42 @@ public sealed class DialogService(Window owner) : IDialogService
 
         if (typeToConfirm is not null)
         {
-            var input = new TextBox { PlaceholderText = typeToConfirm };
-            body.Children.Add(Text($"Type '{typeToConfirm}' to confirm:"));
+            // The name sits in its own box with a Copy button, so long names can be pasted rather than retyped.
+            var copy = new Button { Content = "Copy", Padding = new Thickness(10, 3), VerticalAlignment = VerticalAlignment.Center };
+            var name = new SelectableTextBlock
+            {
+                Text = typeToConfirm,
+                FontFamily = new FontFamily("Cascadia Mono, Consolas, Menlo, DejaVu Sans Mono, monospace"),
+                FontWeight = FontWeight.SemiBold,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            Grid.SetColumn(copy, 1);
+            var nameBox = new Border
+            {
+                Classes = { "banner" },
+                Padding = new Thickness(10, 6),
+                Child = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto"), ColumnSpacing = 8, Children = { name, copy } },
+            };
+
+            var input = new TextBox { PlaceholderText = "Paste or type the name" };
+            body.Children.Add(Text("To confirm, enter this name:"));
+            body.Children.Add(nameBox);
             body.Children.Add(input);
             ok.IsEnabled = false;
-            input.TextChanged += (_, _) => ok.IsEnabled = input.Text == typeToConfirm;
+            ok.Classes.Add("dangerSolid");
+            // Ignore spaces or a line break picked up when copying from elsewhere.
+            input.TextChanged += (_, _) => ok.IsEnabled = input.Text?.Trim() == typeToConfirm;
+
+            copy.Click += async (_, _) =>
+            {
+                if (TopLevel.GetTopLevel(dialog)?.Clipboard is { } clipboard)
+                {
+                    await clipboard.SetTextAsync(typeToConfirm);
+                    copy.Content = "Copied";
+                }
+            };
+            dialog.Opened += (_, _) => input.Focus();
         }
 
         ok.Click += (_, _) =>
@@ -361,6 +394,74 @@ public sealed class DialogService(Window owner) : IDialogService
     }
 
     public async Task OpenUrlAsync(Uri url) => await owner.Launcher.LaunchUriAsync(url);
+
+    public async Task<AppOptions?> EditOptionsAsync(AppOptions options)
+    {
+        CheckBox Check(string text, bool value) => new() { Content = text, IsChecked = value };
+
+        var connectOnStartup = Check("Connect to all saved connections when the app starts", options.ConnectOnStartup);
+        var expandQueues = Check("Queues folder", options.ExpandQueues);
+        var expandTopicsFolder = Check("Topics folder", options.ExpandTopicsFolder);
+        var expandTopics = Check("Each topic (shows its subscriptions)", options.ExpandTopics);
+        var threshold = new NumericUpDown
+        {
+            Value = options.PurgeConfirmThreshold,
+            Minimum = 0,
+            Maximum = 10_000_000,
+            Increment = 100,
+            FormatString = "N0",
+            Width = 160,
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        var checkUpdates = Check("Check for updates when the app starts", options.CheckForUpdatesOnStartup);
+
+        AppOptions? result = null;
+        var dialog = BuildDialog("Options", 520, out var ok, out var body, "Save");
+        body.Spacing = 6;
+
+        body.Children.Add(Label("Startup"));
+        body.Children.Add(connectOnStartup);
+        body.Children.Add(Muted("When off, connections stay collapsed and connect the first time you expand them. "
+            + "Recommended if you have many connections."));
+
+        body.Children.Add(Section("When a connection is expanded, start with these expanded"));
+        body.Children.Add(expandQueues);
+        body.Children.Add(expandTopicsFolder);
+        body.Children.Add(expandTopics);
+        body.Children.Add(Muted("Refresh keeps whatever you have expanded or collapsed since."));
+
+        body.Children.Add(Section("Purging"));
+        body.Children.Add(Text("Ask me to enter the queue or subscription name when purging more than"));
+        body.Children.Add(new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Children = { threshold, new TextBlock { Text = "messages", VerticalAlignment = VerticalAlignment.Center } },
+        });
+        body.Children.Add(Muted("Smaller purges ask for a simple confirmation. 0 always asks for the name."));
+
+        body.Children.Add(Section("Updates"));
+        body.Children.Add(checkUpdates);
+
+        ok.Click += (_, _) =>
+        {
+            result = new AppOptions
+            {
+                ConnectOnStartup = connectOnStartup.IsChecked == true,
+                ExpandQueues = expandQueues.IsChecked == true,
+                ExpandTopicsFolder = expandTopicsFolder.IsChecked == true,
+                ExpandTopics = expandTopics.IsChecked == true,
+                PurgeConfirmThreshold = (int)Math.Clamp(threshold.Value ?? AppOptions.DefaultPurgeConfirmThreshold, 0, 10_000_000),
+                CheckForUpdatesOnStartup = checkUpdates.IsChecked == true,
+            };
+            dialog.Close();
+        };
+
+        await dialog.ShowDialog(owner);
+        return result;
+    }
+
+    private static TextBlock Section(string text) => new() { Text = text, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 10, 0, 0), TextWrapping = TextWrapping.Wrap };
 
     private static Window BuildDialog(string title, double width, out Button ok, out StackPanel body, string okLabel, bool showCancel = true)
     {
