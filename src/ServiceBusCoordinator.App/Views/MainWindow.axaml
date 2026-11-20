@@ -324,7 +324,25 @@
 
             <!-- Header -->
             <StackPanel DockPanel.Dock="Top" Spacing="14" Margin="0,0,0,6">
-              <Grid ColumnDefinitions="Auto,*">
+              <Grid ColumnDefinitions="Auto,*,Auto">
+                <!-- Large purge buttons that don't depend on the sub-queue picked in the Messages tab. -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="12,0,0,0"
+                            IsVisible="{Binding HasMessages}">
+                  <Button Classes="dangerSolid large" Command="{Binding PurgeActiveCommand}"
+                          ToolTip.Tip="Permanently delete every active message (and deferred and scheduled ones)">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                      <PathIcon Data="{x:Static app:Icons.Trash}" Width="15" Height="15" />
+                      <TextBlock Text="Purge messages" />
+                    </StackPanel>
+                  </Button>
+                  <Button Classes="dangerSolid large" Command="{Binding PurgeDeadLetterCommand}"
+                          ToolTip.Tip="Permanently delete every message in the dead-letter queue">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                      <PathIcon Data="{x:Static app:Icons.Trash}" Width="15" Height="15" />
+                      <TextBlock Text="Purge DLQ" />
+                    </StackPanel>
+                  </Button>
+                </StackPanel>
                 <Border Width="44" Height="44" CornerRadius="10" Background="{DynamicResource AccentSoftBrush}">
                   <PathIcon Data="{Binding Icon}" Width="22" Height="22"
                             Classes.queue="{Binding IsQueue}" Classes.topic="{Binding IsTopic}" Classes.subscription="{Binding IsSubscription}" />

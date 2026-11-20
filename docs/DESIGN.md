@@ -98,6 +98,9 @@ ServiceBusCoordinator.sln
   TTL, DeadLetterReason/ErrorDescription/Source) and application properties.
 
 ### 3.4 Purge
+* Started from the large **Purge messages** / **Purge DLQ** buttons in a queue's or subscription's header (always the
+  active messages / the dead-letter queue), the **Purge** button in the Messages toolbar (the sub-queue shown in the
+  picker), or the tree's context menu.
 * Confirmation dialog requiring the entity name to be entered for large purges (more than 100 messages by default,
   configurable in Options, or an unknown count). The name is shown with a **Copy** button so it can be pasted;
   surrounding whitespace from a paste is ignored.

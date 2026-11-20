@@ -173,7 +173,8 @@ public sealed partial class EntityViewModel : ObservableObject
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(
-        nameof(RefreshCommand), nameof(LoadMoreCommand), nameof(PurgeCommand), nameof(ResubmitSelectedCommand), nameof(ResubmitAllCommand),
+        nameof(RefreshCommand), nameof(LoadMoreCommand), nameof(PurgeCommand), nameof(PurgeActiveCommand), nameof(PurgeDeadLetterCommand),
+        nameof(ResubmitSelectedCommand), nameof(ResubmitAllCommand),
         nameof(CancelScheduledCommand), nameof(DeleteDeferredCommand), nameof(FindSessionsCommand), nameof(OpenSessionCommand),
         nameof(NextSessionCommand), nameof(ClearSessionStateCommand), nameof(ExportCommand), nameof(ExportAllCommand),
         nameof(SendMessageCommand), nameof(ResendCommand))]
@@ -513,6 +514,14 @@ public sealed partial class EntityViewModel : ObservableObject
 
     [RelayCommand(CanExecute = nameof(NotBusy))]
     private Task PurgeAsync() => PurgeSourceAsync(Source);
+
+    /// <summary>The header's Purge messages button: always the active messages, whatever sub-queue is being viewed.</summary>
+    [RelayCommand(CanExecute = nameof(NotBusy))]
+    private Task PurgeActiveAsync() => PurgeSourceAsync(MessageSource.Active);
+
+    /// <summary>The header's Purge DLQ button: always the dead-letter queue.</summary>
+    [RelayCommand(CanExecute = nameof(NotBusy))]
+    private Task PurgeDeadLetterAsync() => PurgeSourceAsync(MessageSource.DeadLetter);
 
     /// <summary>Purges one sub-queue after confirmation; also used by the tree's context menu.</summary>
     public async Task PurgeSourceAsync(MessageSource source)
