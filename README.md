@@ -8,7 +8,7 @@ and subscriptions, read messages, clear out queues, and send dead-lettered messa
 - **Connect to several namespaces at once** by pasting a connection string. Connection strings are kept in your
   operating system's secure storage, never in a plain file.
 - **Browse queues, topics and subscriptions** with live message counts and a clear warning when dead-letter messages
-  pile up. Connections only connect when you expand them, so a long list of saved connections opens instantly.
+  pile up. Connections only connect when you expand them, so the app opens instantly even with a long list of saved connections.
 - **Read messages** without removing them, with a formatted body (JSON, XML, text) and all their properties.
 - **Fix dead-lettered messages**: resubmit some or all of them to the original queue or topic, or to another one.
 - **Purge** a queue or its dead-letter queue, with confirmation, progress and cancel, from the toolbar or by
