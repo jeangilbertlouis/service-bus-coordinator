@@ -52,6 +52,18 @@ ServiceBusCoordinator.sln
 * Parsed with `ServiceBusConnectionStringProperties` to show the namespace host and detect an `EntityPath`.
 * All saved connections are serialised to JSON and stored as a single encrypted blob in the OS secret store.
   Nothing secret is ever written to disk in plain text.
+* **Folders.** Connections can be grouped in sidebar folders (one level deep), created with **New folder** on the
+  Namespaces header or the tree's context menu, renamed from the context menu or the folder's overview. Deleting a
+  folder keeps its connections and moves them to the top level where the folder was. A new connection goes into the
+  selected folder (or the selected connection's folder), otherwise to the end of the list.
+* **Drag and drop.** Connections and folders are dragged with the left button (a 6px move starts the drag, so a click
+  still just selects). Dropping on the top or bottom half of a row places the item before or after it, shown by a
+  line; dropping a connection on the middle of a folder files it inside, shown by an outline. Folders stay at the top
+  level. Escape cancels, and the tree scrolls when dragging near its edges. The drag is handled with pointer events
+  in `MainWindow.axaml.cs` (no OS drag-and-drop), and `MainWindowViewModel.ResolveDrop` / `Move` decide and apply it.
+* The blob (format version 2) holds the connections in display order, each with an optional `FolderId`, plus the
+  folders (name, expanded) and the order of top-level entries (`ConnectionLayout` in Core). Version 1 blobs load with
+  every connection at the top level.
 
 ### 3.2 Entity discovery
 * **Connections connect lazily** (unless *Connect at startup* is turned on in Options, §3.16). At startup every saved
@@ -59,10 +71,16 @@ ServiceBusCoordinator.sln
   connection connects and lists its entities the first time it is expanded (or via **Connect** on its overview,
   Refresh, or Add entity). Until then it holds a "Connecting…" placeholder child so the tree shows an expander. A
   failed attempt leaves a "Could not connect" placeholder; expanding again or **Try again** retries. A newly added
-  connection connects straight away. This keeps startup fast and quiet with many connections.
+  connection follows the same rule: it is added collapsed and selected, and connects when expanded or on **Connect**.
+  This keeps startup fast and quiet with many connections.
 * Each connection groups entities under **Queues** and **Topics** folders. A folder's pills show the total active and
   dead-letter messages of the queues or subscriptions in it (not how many entities it holds); they update when an
-  entity is refreshed or purged. By default Queues starts expanded and Topics, and each topic, collapsed (Options);
+  entity is refreshed or purged. Each topic row likewise shows its subscriptions' active and dead-letter totals (the
+  subscription count is in the pill's tooltip). A queue whose name ends in `_error` (an error-queue convention, configurable in
+  Options) shows its message count in red while it holds messages.
+* A connection's overview shows tiles for its entities, total **active** messages (queues and subscriptions),
+  total **dead-lettered**, and messages **in error queues** with how many error queues there are (hidden when
+  error-queue highlighting is off). Error-queue messages are also counted in the active total. By default Queues starts expanded and Topics, and each topic, collapsed (Options);
   Refresh keeps whatever the user has expanded or collapsed since.
 * `ServiceBusAdministrationClient.GetQueuesAsync / GetTopicsAsync / GetSubscriptionsAsync`
   plus `Get*RuntimePropertiesAsync` for active, dead-letter, scheduled and transfer-DLQ counts.
@@ -216,7 +234,8 @@ ServiceBusCoordinator.sln
 ### 3.16 Options
 * **Options** (gear button in the sidebar toolbar, or the status bar link) holds the default behaviours: connect all
   connections at startup (off), which of Queues / Topics / each topic start expanded (Queues only), the purge size
-  that asks for the entity name (100), and checking for updates at startup (on).
+  that asks for the entity name (100), checking for updates at startup (on), and red counts for error queues (on,
+  names ending in `_error`; several comma-separated endings allowed, matched case-insensitively).
 * Stored as plain JSON (nothing secret) in `options.json` under the per-user application-data folder
   (`%APPDATA%\ServiceBusCoordinator` on Windows, `~/.config/ServiceBusCoordinator` on Linux and macOS). A missing or
   unreadable file means the defaults; unknown properties are ignored, so older and newer versions can share it.

@@ -70,4 +70,37 @@ public sealed class AppOptionsTests : IDisposable
         Assert.True(loaded.ExpandQueues);
         Assert.Equal(0, loaded.PurgeConfirmThreshold);
     }
+
+    [Theory]
+    [InlineData("orders_error", true)]
+    [InlineData("Orders_ERROR", true)]
+    [InlineData("orders", false)]
+    [InlineData("orders_error_archive", false)]
+    public void Error_queues_are_matched_by_suffix_by_default(string name, bool expected) =>
+        Assert.Equal(expected, new AppOptions().IsErrorQueue(name));
+
+    [Fact]
+    public void Error_queue_suffixes_are_configurable_and_can_be_turned_off()
+    {
+        var options = new AppOptions { ErrorQueueSuffixes = " _error, -dlq ,," };
+        Assert.True(options.IsErrorQueue("payments-dlq"));
+        Assert.True(options.IsErrorQueue("payments_error"));
+
+        options.HighlightErrorQueues = false;
+        Assert.False(options.IsErrorQueue("payments_error"));
+
+        Assert.False(new AppOptions { ErrorQueueSuffixes = "" }.IsErrorQueue("payments_error"));
+    }
+
+    [Fact]
+    public void Error_queue_settings_round_trip()
+    {
+        var store = new AppOptionsStore(Path.Combine(_dir, "options.json"));
+        store.Save(new AppOptions { HighlightErrorQueues = false, ErrorQueueSuffixes = "_error,_failed" });
+
+        var loaded = store.Load();
+
+        Assert.False(loaded.HighlightErrorQueues);
+        Assert.Equal("_error,_failed", loaded.ErrorQueueSuffixes);
+    }
 }
