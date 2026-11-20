@@ -38,8 +38,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RemoveConnectionCommand), nameof(RefreshNamespaceCommand), nameof(AddEntityCommand),
-        nameof(RefreshSelectedCommand), nameof(PurgeSelectedCommand), nameof(RenameFolderCommand))]
-    [NotifyPropertyChangedFor(nameof(SelectedNamespace), nameof(CanPurgeSelectedNode), nameof(SelectedFolder), nameof(IsFolderSelected))]
+        nameof(RefreshSelectedCommand), nameof(PurgeSelectedCommand), nameof(RenameFolderCommand), nameof(DeleteSelectedEntityCommand))]
+    [NotifyPropertyChangedFor(nameof(SelectedNamespace), nameof(CanPurgeSelectedNode), nameof(SelectedFolder), nameof(IsFolderSelected),
+        nameof(DeleteSelectedLabel))]
     public partial TreeNodeViewModel? SelectedNode { get; set; }
 
     public NamespaceNodeViewModel? SelectedNamespace => SelectedNode?.Namespace;
@@ -70,6 +71,66 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
     [ObservableProperty]
     public partial string? StorageWarning { get; set; }
 
+    // ----------------------------------------------------------------- Zoom
+
+    /// <summary>How much the window content is scaled (1 = 100%).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ZoomText), nameof(IsZoomed))]
+    public partial double Zoom { get; set; } = 1.0;
+
+    public string ZoomText => $"{Zoom * 100:0}%";
+
+    public bool IsZoomed => Math.Abs(Zoom - 1.0) > 0.001;
+
+    private int _zoomSaveVersion;
+
+    partial void OnZoomChanged(double value)
+    {
+        var clamped = AppOptions.ClampZoom(value);
+        if (clamped != value)
+        {
+            Zoom = clamped;
+            return;
+        }
+
+        if (Options.Zoom == value)
+        {
+            return;
+        }
+
+        Options.Zoom = value;
+        _ = SaveZoomSoonAsync();
+    }
+
+    /// <summary>Saves the zoom once it settles, so scrolling the wheel does not write the file for every step.</summary>
+    private async Task SaveZoomSoonAsync()
+    {
+        var version = ++_zoomSaveVersion;
+        await Task.Delay(600);
+        if (version != _zoomSaveVersion)
+        {
+            return;
+        }
+
+        try
+        {
+            _optionsStore?.Save(Options);
+        }
+        catch (Exception)
+        {
+            // The zoom still applies until the app closes.
+        }
+    }
+
+    [RelayCommand]
+    private void ZoomIn() => Zoom = AppOptions.StepZoom(Zoom, zoomIn: true);
+
+    [RelayCommand]
+    private void ZoomOut() => Zoom = AppOptions.StepZoom(Zoom, zoomIn: false);
+
+    [RelayCommand]
+    private void ResetZoom() => Zoom = 1.0;
+
     private bool HasNamespace => SelectedNamespace is not null;
 
     private bool CanRemoveSelected => SelectedNamespace is not null || SelectedFolder is not null;
@@ -95,6 +156,8 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         {
             // No writable settings folder: run with the defaults.
         }
+
+        Zoom = Options.Zoom;
 
         var layout = ConnectionLayout.Empty;
         try
@@ -460,6 +523,64 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
 
     private bool CanPurgeSelected(MessageSource source) => CanPurgeSelectedNode;
 
+    /// <summary>"Delete queue…" or "Delete subscription…" for the selected entity.</summary>
+    public string DeleteSelectedLabel => SelectedNode is EntityNodeViewModel { IsSubscription: true } ? "Delete subscription…" : "Delete queue…";
+
+    private bool CanDeleteSelectedEntity() => CanPurgeSelectedNode;
+
+    /// <summary>
+    /// Deletes the selected queue or subscription from the namespace, with all its messages, after the user types its
+    /// name. The tree and totals update without reloading the namespace.
+    /// </summary>
+    [RelayCommand(CanExecute = nameof(CanDeleteSelectedEntity))]
+    private async Task DeleteSelectedEntityAsync()
+    {
+        if (SelectedNode is not EntityNodeViewModel { Entity.HasMessages: true } node || node.Namespace is not { } ns)
+        {
+            return;
+        }
+
+        var entity = node.Entity;
+        var kind = entity.Kind == EntityKind.Subscription ? "subscription" : "queue";
+        var where = entity.Kind == EntityKind.Subscription ? $" from topic '{entity.TopicName}'" : "";
+        var messages = entity.Counts is { } c && c.Active + c.DeadLetter + c.Scheduled + c.TransferDeadLetter > 0
+            ? $" It holds {c.Active:N0} active and {c.DeadLetter:N0} dead-lettered messages, which are deleted with it."
+            : "";
+        if (!await _dialogs.ConfirmAsync(
+                $"Delete {kind}",
+                $"Permanently delete the {kind} '{entity.Name}'{where} in {ns.Profile.Name}?{messages}\n\n"
+                + $"This cannot be undone. Anything sending to or reading from it will start failing. Type the {kind} name to confirm.",
+                $"Delete {kind}",
+                typeToConfirm: entity.Name))
+        {
+            return;
+        }
+
+        try
+        {
+            if (ns.Connection is not { } connection)
+            {
+                throw new InvalidOperationException("The connection is not open. Expand it and try again.");
+            }
+
+            if (CurrentEntity is { } current && ReferenceEquals(SelectedNode, node))
+            {
+                current.CancelCommand.Execute(null);
+            }
+
+            await connection.DeleteEntityAsync(entity);
+        }
+        catch (Exception ex)
+        {
+            await _dialogs.ShowMessageAsync($"Delete {kind}", $"The {kind} '{entity.Name}' could not be deleted: " + SecretScrubber.Scrub(ex.Message));
+            return;
+        }
+
+        SelectedNode = (TreeNodeViewModel?)node.ParentTopic ?? (TreeNodeViewModel?)node.Folder ?? ns;
+        ns.RemoveEntity(node);
+        Save();
+    }
+
     private async Task WaitForEntityLoadAsync()
     {
         try
@@ -515,8 +636,238 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         }
     }
 
+    // ----------------------------------------------------------------- Export / import
+
+    /// <summary>The sidebar as layout entries, in display order.</summary>
+    private List<ConnectionLayoutItem> LayoutItems() => RootNodes.Select(n => n switch
+    {
+        ConnectionFolderNodeViewModel f => ConnectionLayoutItem.ForFolder(f.Folder, f.Connections.Select(c => c.Profile).ToList()),
+        _ => ConnectionLayoutItem.ForConnection(((NamespaceNodeViewModel)n).Profile),
+    }).ToList();
+
+    /// <summary>Saves every connection, with its folder and the sidebar order, to a file (optionally password-protected).</summary>
+    [RelayCommand]
+    private async Task ExportConnectionsAsync()
+    {
+        var count = Namespaces.Count();
+        if (count == 0)
+        {
+            await _dialogs.ShowMessageAsync("Export connections", "There are no connections to export yet.");
+            return;
+        }
+
+        if (await _dialogs.ChooseExportAsync(count) is not { } choice)
+        {
+            return;
+        }
+
+        try
+        {
+            var data = await Task.Run(() => ConnectionTransfer.Export(LayoutItems(), choice.Password));
+            await using var stream = await _dialogs.SaveJsonFileAsync("Export connections", $"service-bus-connections-{DateTime.Now:yyyy-MM-dd}.json");
+            if (stream is null)
+            {
+                return;
+            }
+
+            if (stream.CanSeek)
+            {
+                stream.SetLength(0);
+            }
+
+            await stream.WriteAsync(data);
+            await _dialogs.ShowMessageAsync("Export connections",
+                $"Exported {Plural(count, "connection")}" + (choice.Password is null
+                    ? ". The file is not password-protected, so keep it somewhere safe."
+                    : ". You will need the password to import them."));
+        }
+        catch (Exception ex)
+        {
+            await _dialogs.ShowMessageAsync("Export connections", "The connections could not be exported: " + SecretScrubber.Scrub(ex.Message));
+        }
+    }
+
+    /// <summary>
+    /// Adds the connections from an export file. Folders are matched by name, connections already saved (same connection
+    /// string) are skipped, and nothing is connected until it is expanded.
+    /// </summary>
+    [RelayCommand]
+    private async Task ImportConnectionsAsync()
+    {
+        byte[] data;
+        try
+        {
+            await using var stream = await _dialogs.OpenJsonFileAsync("Import connections");
+            if (stream is null)
+            {
+                return;
+            }
+
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            data = buffer.ToArray();
+        }
+        catch (Exception ex)
+        {
+            await _dialogs.ShowMessageAsync("Import connections", "The file could not be read: " + SecretScrubber.Scrub(ex.Message));
+            return;
+        }
+
+        IReadOnlyList<ConnectionLayoutItem> imported;
+        try
+        {
+            string? password = null;
+            string? error = null;
+            while (true)
+            {
+                if (ConnectionTransfer.IsEncrypted(data))
+                {
+                    password = await _dialogs.PromptPasswordAsync("Import connections", "This file is protected with a password. Enter it to import the connections.", error);
+                    if (password is null)
+                    {
+                        return;
+                    }
+                }
+
+                try
+                {
+                    var attempt = password;
+                    imported = await Task.Run(() => ConnectionTransfer.Import(data, attempt));
+                    break;
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    error = ex.Message;
+                }
+            }
+        }
+        catch (InvalidDataException ex)
+        {
+            await _dialogs.ShowMessageAsync("Import connections", ex.Message);
+            return;
+        }
+
+        var summary = Merge(imported);
+        Save();
+        await _dialogs.ShowMessageAsync("Import connections", DescribeImport(summary));
+    }
+
+    /// <summary>Adds imported entries to the sidebar without disturbing the connections already there.</summary>
+    private ImportSummary Merge(IReadOnlyList<ConnectionLayoutItem> imported)
+    {
+        var known = Namespaces.Select(n => n.Profile.ConnectionString).ToList();
+        int added = 0, skipped = 0, foldersCreated = 0;
+
+        IEnumerable<ConnectionProfile> Fresh(IEnumerable<ConnectionProfile> connections)
+        {
+            foreach (var c in connections)
+            {
+                if (known.Any(k => ConnectionTransfer.SameConnection(k, c.ConnectionString)))
+                {
+                    skipped++;
+                    continue;
+                }
+
+                known.Add(c.ConnectionString);
+                added++;
+                yield return c;
+            }
+        }
+
+        foreach (var item in imported)
+        {
+            if (item.Folder is { } folder)
+            {
+                var fresh = Fresh(item.Connections).ToList();
+                var target = RootNodes.OfType<ConnectionFolderNodeViewModel>()
+                    .FirstOrDefault(f => string.Equals(f.Title, folder.Name, StringComparison.OrdinalIgnoreCase));
+                if (target is null)
+                {
+                    target = NewFolderNode(folder);
+                    RootNodes.Add(target);
+                    foldersCreated++;
+                }
+
+                foreach (var c in fresh)
+                {
+                    target.Children.Add(new NamespaceNodeViewModel(c, Options));
+                }
+            }
+            else
+            {
+                foreach (var c in Fresh(item.Connections))
+                {
+                    RootNodes.Add(new NamespaceNodeViewModel(c, Options));
+                }
+            }
+        }
+
+        return new ImportSummary(added, skipped, foldersCreated);
+    }
+
+    private static string DescribeImport(ImportSummary s)
+    {
+        if (s.Added == 0 && s.Skipped == 0)
+        {
+            return "The file contains no connections.";
+        }
+
+        var text = s.Added == 0
+            ? "Nothing new to add."
+            : $"Added {Plural(s.Added, "connection")}" + (s.FoldersCreated > 0 ? $" and {Plural(s.FoldersCreated, "folder")}." : ".");
+        if (s.Skipped > 0)
+        {
+            text += $" {Plural(s.Skipped, "connection")} {(s.Skipped == 1 ? "was" : "were")} already saved and skipped.";
+        }
+
+        return text + (s.Added > 0 ? " They connect when you expand them." : "");
+    }
+
+    private static string Plural(int n, string noun) => n == 1 ? $"1 {noun}" : $"{n:N0} {noun}s";
+
+    /// <summary>
+    /// Collapses every folder, connection, Queues/Topics folder and topic in the sidebar. Connections stay connected;
+    /// expanding one again shows it collapsed inside.
+    /// </summary>
+    [RelayCommand]
+    private void CollapseAll()
+    {
+        _deferSave = true;
+        try
+        {
+            foreach (var node in RootNodes)
+            {
+                Collapse(node);
+            }
+        }
+        finally
+        {
+            _deferSave = false;
+        }
+
+        Save();
+
+        static void Collapse(TreeNodeViewModel node)
+        {
+            foreach (var child in node.Children)
+            {
+                Collapse(child);
+            }
+
+            node.IsExpanded = false;
+        }
+    }
+
+    /// <summary>Set while a batch of changes is made, so the connections are saved once at the end.</summary>
+    private bool _deferSave;
+
     private void Save()
     {
+        if (_deferSave)
+        {
+            return;
+        }
+
         try
         {
             _repository.SaveLayout(ConnectionLayout.FromItems(RootNodes.Select(n => n switch

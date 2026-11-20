@@ -21,5 +21,7 @@ public static class Icons
     public static readonly Geometry Resubmit = Geometry.Parse("M6,2 L1,6.5 L6,11 V8 H10 C11.7,8 13,9.3 13,11 V14 H15 V11 C15,8.2 12.8,6 10,6 H6 Z");
     public static readonly Geometry Filter = Geometry.Parse("M1,2 H15 L10,8 V14 L6,12 V8 Z");
     public static readonly Geometry Download = Geometry.Parse("M7,1 H9 V8 H12 L8,12 L4,8 H7 Z M1,13 H15 V15 H1 Z");
+    public static readonly Geometry CollapseAll = Geometry.Parse("M3,7.2 L8,3 L13,7.2 L11.8,8.6 L8,5.4 L4.2,8.6 Z M3,12.2 L8,8 L13,12.2 L11.8,13.6 L8,10.4 L4.2,13.6 Z");
+    public static readonly Geometry More = Geometry.Parse("M2,6.5 H5 V9.5 H2 Z M6.5,6.5 H9.5 V9.5 H6.5 Z M11,6.5 H14 V9.5 H11 Z");
     public static readonly Geometry Lightning = Geometry.Parse("M9,1 L3,9 H7 L6,15 L13,6 H9 Z");
 }

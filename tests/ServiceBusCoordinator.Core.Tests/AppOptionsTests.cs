@@ -103,4 +103,38 @@ public sealed class AppOptionsTests : IDisposable
         Assert.False(loaded.HighlightErrorQueues);
         Assert.Equal("_error,_failed", loaded.ErrorQueueSuffixes);
     }
+
+    [Theory]
+    [InlineData(1.0, true, 1.1)]
+    [InlineData(1.0, false, 0.9)]
+    [InlineData(2.0, true, 2.0)]
+    [InlineData(0.5, false, 0.5)]
+    [InlineData(1.05, true, 1.1)]
+    [InlineData(1.05, false, 1.0)]
+    [InlineData(0.67, false, 0.5)]
+    public void Zoom_steps_like_a_browser_and_stops_at_the_ends(double from, bool zoomIn, double expected)
+    {
+        Assert.Equal(expected, AppOptions.StepZoom(from, zoomIn), 3);
+    }
+
+    [Theory]
+    [InlineData(double.NaN, 1.0)]
+    [InlineData(0, 1.0)]
+    [InlineData(-2, 1.0)]
+    [InlineData(9, 2.0)]
+    [InlineData(0.1, 0.5)]
+    [InlineData(1.25, 1.25)]
+    public void Zoom_from_the_file_is_kept_in_range(double stored, double expected)
+    {
+        Assert.Equal(expected, AppOptions.ClampZoom(stored), 3);
+    }
+
+    [Fact]
+    public void Zoom_round_trips()
+    {
+        var store = new AppOptionsStore(Path.Combine(_dir, "options.json"));
+        store.Save(new AppOptions { Zoom = 1.25 });
+
+        Assert.Equal(1.25, store.Load().Zoom, 3);
+    }
 }

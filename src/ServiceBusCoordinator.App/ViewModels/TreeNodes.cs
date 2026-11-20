@@ -500,9 +500,50 @@ public sealed partial class NamespaceNodeViewModel : TreeNodeViewModel, IAsyncDi
         Children.Add(queues);
         Children.Add(topics);
 
-        var subscriptionCount = snapshot.Topics.Sum(t => t.Subscriptions.Count);
-        Summary = $"{Plural(snapshot.Queues.Count, "queue")} · {Plural(snapshot.Topics.Count, "topic")} · {Plural(subscriptionCount, "subscription")}";
+        UpdateSummary();
         UpdateTotals();
+    }
+
+    private void UpdateSummary()
+    {
+        var folders = Children.OfType<FolderNodeViewModel>().ToList();
+        var queues = folders.ElementAtOrDefault(0)?.Children.Count ?? 0;
+        var topics = folders.ElementAtOrDefault(1)?.Children ?? [];
+        var subscriptionCount = topics.Sum(t => t.Children.Count);
+        Summary = $"{Plural(queues, "queue")} · {Plural(topics.Count, "topic")} · {Plural(subscriptionCount, "subscription")}";
+    }
+
+    /// <summary>Takes a deleted queue or subscription out of the tree and recomputes the totals that included it.</summary>
+    public void RemoveEntity(EntityNodeViewModel node)
+    {
+        if (node.ParentTopic is { } topic)
+        {
+            topic.Children.Remove(node);
+            topic.UpdateTopicTotals();
+        }
+        else
+        {
+            node.Folder?.Children.Remove(node);
+        }
+
+        // A manually added entry for it would otherwise show it again; the caller saves the profile.
+        Profile.ManualEntities.RemoveAll(p => EntityPathMatches(p, node.Entity));
+
+        node.Folder?.Recount();
+        UpdateSummary();
+        UpdateTotals();
+    }
+
+    private static bool EntityPathMatches(string manualPath, EntityInfo entity)
+    {
+        try
+        {
+            return string.Equals(EntityInfo.ParseManual(manualPath).Path, entity.Path, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
     }
 
     /// <summary>Recomputes the connection's dead-letter total from its folders.</summary>

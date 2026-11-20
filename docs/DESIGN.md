@@ -64,6 +64,19 @@ ServiceBusCoordinator.sln
 * The blob (format version 2) holds the connections in display order, each with an optional `FolderId`, plus the
   folders (name, expanded) and the order of top-level entries (`ConnectionLayout` in Core). Version 1 blobs load with
   every connection at the top level.
+* **Collapse all** (double-chevron button on the Namespaces header, or the tree's context menu) collapses every
+  folder, connection, Queues/Topics folder and topic. Connections stay connected, and one expanded again shows its
+  contents collapsed. Folder expansion is saved once for the whole batch.
+* **Export and import.** The `…` menu on the Namespaces header exports every connection, with its folder, the sidebar
+  order and any manually added entities, to a JSON file (`ConnectionTransfer` in Core), and imports such a file.
+  Because the file holds connection strings with their keys, the export dialog defaults to protecting it with a
+  password (at least 8 characters): the entries are encrypted with AES-256-GCM using a key from PBKDF2-SHA256
+  (600,000 iterations, random salt and nonce, the format and key settings bound as associated data). Without a
+  password the entries are plain JSON and the dialog warns about it. Import asks for the password when the file needs
+  one (asking again when it is wrong), and adds to the existing connections: a folder is matched by name
+  (case-insensitive) or created, a connection whose connection string is already saved (compared ignoring key case,
+  part order, a trailing `/` or `;`) is skipped, and imported connections get new ids and stay disconnected until
+  expanded. A summary says what was added and skipped. Files from a newer format version are refused with a message.
 
 ### 3.2 Entity discovery
 * **Connections connect lazily** (unless *Connect at startup* is turned on in Options, §3.16). At startup every saved
@@ -114,6 +127,18 @@ ServiceBusCoordinator.sln
 * Session-enabled entities are purged session by session (see §3.6).
 * The SDK's server-side batch delete (`DeleteMessagesAsync`) is still internal in `Azure.Messaging.ServiceBus` 7.21;
   switch to it when it becomes public (much faster for large entities).
+
+### 3.4a Deleting queues and subscriptions
+* **Delete** in a queue's or subscription's header (red outline, next to the purge buttons) or **Delete queue… /
+  Delete subscription…** in the tree's context menu. Topics cannot be deleted from the app.
+* Always asks for the entity name (with the **Copy** button), whatever its size, and says how many active and
+  dead-lettered messages go with it and that senders and receivers will start failing.
+* `NamespaceConnection.DeleteEntityAsync` calls `DeleteQueueAsync` / `DeleteSubscriptionAsync`; an entity that is
+  already gone counts as deleted, and missing Manage rights give a clear message. Any running load or purge on it is
+  cancelled first.
+* The tree updates without reloading the namespace: the node is removed, the Queues/Topics folder, topic and
+  namespace totals and the entity summary are recomputed, selection moves to the parent, and a manually added entry
+  for it is dropped from the connection.
 
 ### 3.5 DLQ resubmit
 1. Receive from the DLQ in PeekLock mode (all, or only the selected sequence numbers).
@@ -235,6 +260,10 @@ ServiceBusCoordinator.sln
   non-zero). Toolbar actions are grouped with dividers and icons; the message list is a card with a header row and
   zebra rows; a status bar shows progress and the app version.
 * Icons are small vector paths in `Icons.cs` (no icon font or image assets).
+* **Zoom.** Ctrl + / Ctrl − (also the keypad keys, and Cmd on macOS) or Ctrl+mouse wheel step through 50–200%
+  like a browser; Ctrl+0 resets. The whole window content sits in a `LayoutTransformControl` scaled by the level, so
+  layout reflows rather than stretching. The status bar shows the level (click for 100%) when it is not 100%. The level
+  is saved in `options.json` (`Zoom`) shortly after it stops changing. Dialogs and menus are not scaled.
 
 ### 3.16 Options
 * **Options** (gear button in the sidebar toolbar, or the status bar link) holds the default behaviours: connect all
@@ -248,7 +277,8 @@ ServiceBusCoordinator.sln
   options apply the next time a connection loads.
 
 ## 4. Security
-* Connection strings only live in memory and in the OS secret store.
+* Connection strings only live in memory and in the OS secret store, except in an export file the user creates on
+  purpose, which is password-encrypted by default (see §3.1).
 * Connection strings are never logged; error messages are scrubbed of `SharedAccessKey=…`.
 * Destructive operations (purge, resubmit) always require explicit confirmation.
 

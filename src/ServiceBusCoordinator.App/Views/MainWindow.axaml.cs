@@ -3,6 +3,7 @@ using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
+using Avalonia.Media;
 using Avalonia.VisualTree;
 using ServiceBusCoordinator.App.ViewModels;
 
@@ -36,6 +37,39 @@ public partial class MainWindow : Window
         NavTree.AddHandler(PointerReleasedEvent, OnNavTreePointerReleased, RoutingStrategies.Tunnel);
         NavTree.AddHandler(PointerCaptureLostEvent, (_, _) => EndDrag(), RoutingStrategies.Tunnel | RoutingStrategies.Bubble);
         AddHandler(KeyDownEvent, OnKeyDown, RoutingStrategies.Tunnel);
+        AddHandler(PointerWheelChangedEvent, OnPointerWheelChanged, RoutingStrategies.Tunnel);
+        DataContextChanged += (_, _) =>
+        {
+            if (ViewModel is { } vm)
+            {
+                vm.PropertyChanged += (_, e) =>
+                {
+                    if (e.PropertyName == nameof(MainWindowViewModel.Zoom))
+                    {
+                        ApplyZoom(vm.Zoom);
+                    }
+                };
+                ApplyZoom(vm.Zoom);
+            }
+        };
+    }
+
+    private void ApplyZoom(double zoom) =>
+        ZoomRoot.LayoutTransform = Math.Abs(zoom - 1) < 0.001 ? null : new ScaleTransform(zoom, zoom);
+
+    /// <summary>Ctrl (Cmd on macOS) is the zoom modifier.</summary>
+    private static bool IsZoomModifier(KeyModifiers modifiers) =>
+        modifiers.HasFlag(KeyModifiers.Control) || (OperatingSystem.IsMacOS() && modifiers.HasFlag(KeyModifiers.Meta));
+
+    private void OnPointerWheelChanged(object? sender, PointerWheelEventArgs e)
+    {
+        if (!IsZoomModifier(e.KeyModifiers) || ViewModel is not { } vm || e.Delta.Y == 0)
+        {
+            return;
+        }
+
+        (e.Delta.Y > 0 ? vm.ZoomInCommand : vm.ZoomOutCommand).Execute(null);
+        e.Handled = true;
     }
 
     private MainWindowViewModel? ViewModel => DataContext as MainWindowViewModel;
@@ -121,6 +155,23 @@ public partial class MainWindow : Window
         {
             EndDrag();
             e.Handled = true;
+            return;
+        }
+
+        if (IsZoomModifier(e.KeyModifiers) && ViewModel is { } vm)
+        {
+            var command = e.Key switch
+            {
+                Key.OemPlus or Key.Add => vm.ZoomInCommand,
+                Key.OemMinus or Key.Subtract => vm.ZoomOutCommand,
+                Key.D0 or Key.NumPad0 => vm.ResetZoomCommand,
+                _ => null,
+            };
+            if (command is not null)
+            {
+                command.Execute(null);
+                e.Handled = true;
+            }
         }
     }
 

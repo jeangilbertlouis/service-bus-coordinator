@@ -1,29 +1,85 @@
 # Service Bus Coordinator
 
-A free desktop app for Windows, macOS and Linux to look inside your Azure Service Bus namespaces: browse queues, topics
-and subscriptions, read messages, clear out queues, and send dead-lettered messages back to where they came from.
+**A fast, free desktop explorer for Azure Service Bus on Windows, macOS and Linux.**
+See what is in every queue and subscription at a glance, find out why messages failed, put them back where they
+belong, and clean up, without opening the Azure portal or writing a script.
 
-## What you can do
+![Service Bus Coordinator showing a namespace overview with active, dead-lettered and error-queue totals](docs/screenshots/namespace-overview.png)
 
-- **Connect to several namespaces at once** by pasting a connection string. Connection strings are kept in your
-  operating system's secure storage, never in a plain file.
-- **Organise connections in folders**, and drag connections and folders to file them or change their order.
-- **Browse queues, topics and subscriptions** with live message counts and a clear warning when dead-letter messages
-  pile up. Connections only connect when you expand them, so the app opens instantly even with a long list of saved connections.
-- **Read messages** without removing them, with a formatted body (JSON, XML, text) and all their properties.
-- **Fix dead-lettered messages**: resubmit some or all of them to the original queue or topic, or to another one.
-- **Purge** a queue or its dead-letter queue, with confirmation, progress and cancel, from the toolbar or by
-  right-clicking it in the tree (which also offers **Refresh**).
-- **Send** new messages, or edit and resend an existing one.
-- **Filter and export** messages to JSON.
-- **See entity settings**: lock duration, time-to-live, forwarding, subscription rules and more.
-- Works with **sessions**, **scheduled and deferred messages**, and the **local Service Bus emulator**.
-- **Error queues stand out**: queues ending in `_error` show their message count in red when they hold messages, and the Queues folder shows their total.
-- **Options** to choose the defaults: connect everything at startup, which folders start expanded, which queue names
-  count as error queues, when a purge asks you to enter the name, and whether to check for updates.
-- Light and dark themes that follow your OS.
-- **Updates itself**: when a new version is released, click **Update and restart**. Set the environment variable
+## Why Service Bus Coordinator
+
+- **See problems at a glance.** Every queue, topic and subscription shows its active and dead-letter counts, and the
+  totals add up on each folder, topic and connection. Dead-letters show in red, and so do error queues (`orders_error`)
+  that hold messages. The namespace overview sums up active, dead-lettered and error-queue messages.
+- **Fix failed messages in a few clicks.** Read dead-lettered messages with the reason and description, then
+  **resubmit** some or all of them to the original queue or topic, or to any other.
+- **Clean up safely.** Big **Purge messages** and **Purge DLQ** buttons, progress you can cancel, and a confirmation
+  that asks for the name (with a Copy button) before anything large is deleted.
+- **Your keys stay safe.** Connection strings live in your operating system's secure storage (Windows DPAPI, macOS
+  Keychain, libsecret on Linux), and exports are password-encrypted by default.
+- **Opens instantly, however many connections you have.** A connection only connects when you expand it.
+- **One download, nothing to install.** A single self-contained app for Windows, macOS (Apple silicon and Intel) and
+  Linux, and it **updates itself** in place.
+
+## Features
+
+### Connections
+- **Many namespaces side by side.** Paste a connection string; the name fills in automatically.
+- **Folders, drag and drop.** Group connections in folders (Production, Test…) and drag connections and folders to
+  file them or change their order.
+- **Export and import all connections**, with their folders and order, to move to a new computer or share a set-up
+  with your team. The file is AES-256 encrypted with a password you choose; importing skips connections you already have.
+- **Works with limited rights.** With a Listen or Send connection string you can still add queues and subscriptions
+  by name and work with their messages.
+- **Local Service Bus emulator** supported.
+
+### Browsing and monitoring
+- Queues, topics and subscriptions in one tree, with **active and dead-letter counts on every row** and totals on
+  each folder, topic and connection.
+- **Error queues stand out:** queues ending in `_error` show their count in red, and the Queues folder shows the total
+  waiting in them. The endings are configurable.
+- A **namespace overview** with total active, dead-lettered and error-queue messages.
+- **Entity properties:** lock duration, time-to-live, max delivery count, sessions, duplicate detection, forwarding,
+  auto-delete, sizes, shared access policy names, and **subscription rules** (SQL and correlation filters).
+- **Collapse all** with one click to tidy a long tree back to just your connections and folders. Connections stay
+  connected.
+- **Right-click** any queue or subscription to refresh, purge or delete it.
+
+### Messages
+- **Read messages without removing them**, page by page, from the active queue, the dead-letter queue or the
+  transfer dead-letter queue.
+- **Formatted bodies** (JSON, XML, text, or hex for binary), all system properties and application properties.
+- **Filter** loaded messages by text, sequence number or `property=value`.
+- **Send** new messages, or **edit and resend** an existing one, with properties and application properties.
+- **Resubmit dead-lettered messages** to their source or another entity, optionally removing the dead-letter details
+  and stamping where they came from.
+- **Export** selected or all messages to JSON.
+- **Sessions, scheduled and deferred messages:** browse session-enabled entities, cancel scheduled messages and
+  delete deferred ones.
+
+### Cleaning up
+- **Purge** active messages or the dead-letter queue from the large header buttons, the toolbar or the context menu,
+  with progress and cancel. Purge also clears deferred and scheduled messages.
+- **Delete queues and subscriptions** you no longer need. You type the name to confirm, and the counts and tree
+  update straight away.
+
+### Comfort
+- **Zoom** the whole window with **Ctrl +** / **Ctrl −** or **Ctrl + mouse wheel** (Cmd on macOS), and **Ctrl+0**
+  to reset. The level is remembered.
+- **Options** for the defaults: connect everything at startup, which folders start expanded, which queue names count
+  as error queues, when a purge asks for the name, and whether to check for updates.
+- **Light and dark themes** that follow your OS.
+- **Updates itself:** when a new version is out, click **Update and restart**. Set the environment variable
   `SBC_DISABLE_UPDATE_CHECK=1` to stop the check on startup.
+
+### Screenshots
+
+| | |
+|---|---|
+| ![Connection folders](docs/screenshots/connection-folders.png) | ![Purge and delete in the queue header and context menu](docs/screenshots/delete-context-menu.png) |
+| Folders, counts and error queues | Purge and delete from the queue header |
+| ![Export connections with a password](docs/screenshots/export-dialog.png) | ![Options](docs/screenshots/options.png) |
+| Password-protected connection export | Options |
 
 ## Install
 

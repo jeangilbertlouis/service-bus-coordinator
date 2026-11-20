@@ -390,6 +390,108 @@ public sealed class DialogService(Window owner) : IDialogService
         return file is null ? null : await file.OpenWriteAsync();
     }
 
+    public async Task<Stream?> OpenJsonFileAsync(string title)
+    {
+        var files = await owner.StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
+        {
+            Title = title,
+            AllowMultiple = false,
+            FileTypeFilter =
+            [
+                new Avalonia.Platform.Storage.FilePickerFileType("JSON") { Patterns = ["*.json"] },
+                new Avalonia.Platform.Storage.FilePickerFileType("All files") { Patterns = ["*"] },
+            ],
+        });
+
+        return files.Count == 0 ? null : await files[0].OpenReadAsync();
+    }
+
+    public async Task<ExportChoice?> ChooseExportAsync(int connectionCount)
+    {
+        var protect = new CheckBox { Content = "Protect the file with a password (recommended)", IsChecked = true };
+        var password = new TextBox { PasswordChar = '•', PlaceholderText = "Password" };
+        var confirm = new TextBox { PasswordChar = '•', PlaceholderText = "Repeat the password" };
+        var passwords = new StackPanel { Spacing = 8, Children = { password, confirm } };
+        var plainWarning = new TextBlock
+        {
+            Text = "Anyone who gets the file can use these connections. Keep it somewhere safe and delete it when you no longer need it.",
+            TextWrapping = TextWrapping.Wrap,
+            Foreground = Brushes.IndianRed,
+            IsVisible = false,
+        };
+        var error = ErrorText();
+        protect.IsCheckedChanged += (_, _) =>
+        {
+            passwords.IsEnabled = protect.IsChecked == true;
+            plainWarning.IsVisible = protect.IsChecked != true;
+            error.IsVisible = false;
+        };
+
+        ExportChoice? result = null;
+        var dialog = BuildDialog("Export connections", 520, out var ok, out var body, "Export…");
+        body.Children.Add(Text(
+            $"Saves {(connectionCount == 1 ? "your connection" : $"all {connectionCount:N0} connections")} with their folders to a file you can "
+            + "import on another computer. The file includes the connection strings and their access keys."));
+        body.Children.Add(protect);
+        body.Children.Add(passwords);
+        body.Children.Add(Muted("Encrypted with AES-256. There is no way to recover a forgotten password."));
+        body.Children.Add(plainWarning);
+        body.Children.Add(error);
+        dialog.Opened += (_, _) => password.Focus();
+
+        ok.Click += (_, _) =>
+        {
+            if (protect.IsChecked != true)
+            {
+                result = new ExportChoice(null);
+                dialog.Close();
+                return;
+            }
+
+            if (string.IsNullOrEmpty(password.Text) || password.Text.Length < 8)
+            {
+                error.Text = "Use a password of at least 8 characters, or untick the password option.";
+                error.IsVisible = true;
+                return;
+            }
+
+            if (password.Text != confirm.Text)
+            {
+                error.Text = "The passwords do not match.";
+                error.IsVisible = true;
+                return;
+            }
+
+            result = new ExportChoice(password.Text);
+            dialog.Close();
+        };
+
+        await dialog.ShowDialog(owner);
+        return result;
+    }
+
+    public async Task<string?> PromptPasswordAsync(string title, string message, string? error = null)
+    {
+        var input = new TextBox { PasswordChar = '•', PlaceholderText = "Password" };
+        var errorText = ErrorText();
+        errorText.Text = error;
+        errorText.IsVisible = error is not null;
+        string? result = null;
+        var dialog = BuildDialog(title, 460, out var ok, out var body, "OK");
+        body.Children.Add(Text(message));
+        body.Children.Add(input);
+        body.Children.Add(errorText);
+        dialog.Opened += (_, _) => input.Focus();
+        ok.Click += (_, _) =>
+        {
+            result = input.Text ?? "";
+            dialog.Close();
+        };
+
+        await dialog.ShowDialog(owner);
+        return result;
+    }
+
     public async Task ShowMessageAsync(string title, string message)
     {
         var dialog = BuildDialog(title, 520, out var ok, out var body, "OK", showCancel: false);
