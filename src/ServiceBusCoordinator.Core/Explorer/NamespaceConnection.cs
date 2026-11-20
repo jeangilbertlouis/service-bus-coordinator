@@ -94,6 +94,37 @@ public sealed class NamespaceConnection : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Deletes a queue or a subscription, with all its messages. An entity that is already gone counts as deleted.
+    /// Throws <see cref="UnauthorizedAccessException"/> when the connection lacks Manage rights.
+    /// </summary>
+    public async Task DeleteEntityAsync(EntityInfo entity, CancellationToken ct = default)
+    {
+        try
+        {
+            switch (entity.Kind)
+            {
+                case EntityKind.Queue:
+                    await _admin.DeleteQueueAsync(entity.Name, ct);
+                    break;
+                case EntityKind.Subscription:
+                    await _admin.DeleteSubscriptionAsync(entity.TopicName, entity.Name, ct);
+                    break;
+                default:
+                    throw new NotSupportedException("Only queues and subscriptions can be deleted.");
+            }
+        }
+        catch (Exception ex) when (ex is RequestFailedException { Status: 404 }
+                                   || ex is ServiceBusException { Reason: ServiceBusFailureReason.MessagingEntityNotFound })
+        {
+            // Already deleted (for example from another tool).
+        }
+        catch (Exception ex) when (IsAuthorizationFailure(ex))
+        {
+            throw new UnauthorizedAccessException("Deleting needs a connection string with Manage rights.", ex);
+        }
+    }
+
     /// <summary>Configuration + runtime details (and rules, for subscriptions). Null when the connection lacks Manage rights.</summary>
     public async Task<EntityDetails?> GetDetailsAsync(EntityInfo entity, CancellationToken ct = default)
     {

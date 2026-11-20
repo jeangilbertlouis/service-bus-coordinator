@@ -10,6 +10,8 @@
         Width="1440" Height="900" MinWidth="960" MinHeight="560"
         WindowStartupLocation="CenterScreen">
 
+  <!-- Scaled by the zoom level (Ctrl +/−, Ctrl+0, Ctrl+mouse wheel); see MainWindow.axaml.cs. -->
+  <LayoutTransformControl x:Name="ZoomRoot">
   <Grid RowDefinitions="*,Auto">
     <Grid ColumnDefinitions="330,Auto,*">
 
@@ -74,7 +76,7 @@
               <TextBlock Text="{Binding StorageWarning}" TextWrapping="Wrap" FontSize="12" />
             </Border>
 
-            <Grid ColumnDefinitions="*,Auto" Margin="2,4,0,-6">
+            <Grid ColumnDefinitions="*,Auto,Auto,Auto" Margin="2,4,0,-6">
               <TextBlock Classes="section" Text="NAMESPACES" VerticalAlignment="Center" />
               <Button Grid.Column="1" Classes="subtle" Padding="5,3" Command="{Binding NewFolderCommand}"
                       ToolTip.Tip="New folder for grouping connections. Drag connections onto it, and drag to reorder.">
@@ -83,19 +85,45 @@
                   <TextBlock Text="New folder" FontSize="11" VerticalAlignment="Center" />
                 </StackPanel>
               </Button>
+              <Button Grid.Column="2" Classes="subtle" Padding="5,3" Margin="2,0,0,0" Command="{Binding CollapseAllCommand}"
+                      ToolTip.Tip="Collapse all">
+                <PathIcon Data="{x:Static app:Icons.CollapseAll}" Width="13" Height="13" />
+              </Button>
+              <Button Grid.Column="3" Classes="subtle" Padding="5,3" Margin="2,0,0,0" ToolTip.Tip="Import or export connections">
+                <PathIcon Data="{x:Static app:Icons.More}" Width="13" Height="13" />
+                <Button.Flyout>
+                  <MenuFlyout Placement="BottomEdgeAlignedRight">
+                    <MenuItem Header="Import connections…" Command="{Binding ImportConnectionsCommand}">
+                      <MenuItem.Icon>
+                        <PathIcon Data="{x:Static app:Icons.Download}" Width="13" Height="13" />
+                      </MenuItem.Icon>
+                    </MenuItem>
+                    <MenuItem Header="Export all connections…" Command="{Binding ExportConnectionsCommand}">
+                      <MenuItem.Icon>
+                        <PathIcon Data="{x:Static app:Icons.Export}" Width="13" Height="13" />
+                      </MenuItem.Icon>
+                    </MenuItem>
+                  </MenuFlyout>
+                </Button.Flyout>
+              </Button>
             </Grid>
           </StackPanel>
 
           <Panel>
             <TextBlock Classes="muted" TextWrapping="Wrap" Margin="16,4" FontSize="12"
                        IsVisible="{Binding HasNoConnections}"
-                       Text="No connections yet. Click 'Add connection' and paste a Service Bus connection string." />
+                       Text="No connections yet. Click 'Add connection' and paste a Service Bus connection string, or import an export file from the … menu." />
             <TreeView x:Name="NavTree" Classes="nav" ItemsSource="{Binding RootNodes}" SelectedItem="{Binding SelectedNode}" Margin="4,0,4,8"
                       ScrollViewer.HorizontalScrollBarVisibility="Disabled">
               <TreeView.ContextMenu>
                 <!-- Right-click selects the item first, so these act on SelectedNode. -->
                 <ContextMenu>
-                  <MenuItem Header="{Binding SelectedNode.Title}" IsEnabled="False" FontWeight="SemiBold" />
+                  <!-- A TextBlock header, so underscores in names are not taken as access keys. -->
+                  <MenuItem IsEnabled="False" FontWeight="SemiBold">
+                    <MenuItem.Header>
+                      <TextBlock Text="{Binding SelectedNode.Title}" />
+                    </MenuItem.Header>
+                  </MenuItem>
                   <Separator />
                   <MenuItem Header="New folder…" Command="{Binding NewFolderCommand}">
                     <MenuItem.Icon>
@@ -106,6 +134,11 @@
                   <MenuItem Header="Delete folder" Command="{Binding RemoveConnectionCommand}" IsVisible="{Binding IsFolderSelected}">
                     <MenuItem.Icon>
                       <PathIcon Data="{x:Static app:Icons.Trash}" Width="12" Height="12" Foreground="{DynamicResource DangerBrush}" />
+                    </MenuItem.Icon>
+                  </MenuItem>
+                  <MenuItem Header="Collapse all" Command="{Binding CollapseAllCommand}">
+                    <MenuItem.Icon>
+                      <PathIcon Data="{x:Static app:Icons.CollapseAll}" Width="12" Height="12" />
                     </MenuItem.Icon>
                   </MenuItem>
                   <MenuItem Header="Refresh" Command="{Binding RefreshSelectedCommand}" IsVisible="{Binding !IsFolderSelected}">
@@ -122,6 +155,13 @@
                   </MenuItem>
                   <MenuItem Header="Purge dead-letter queue…" IsVisible="{Binding CanPurgeSelectedNode}"
                             Command="{Binding PurgeSelectedCommand}" CommandParameter="{x:Static core:MessageSource.DeadLetter}">
+                    <MenuItem.Icon>
+                      <PathIcon Data="{x:Static app:Icons.Trash}" Width="12" Height="12" Foreground="{DynamicResource DangerBrush}" />
+                    </MenuItem.Icon>
+                  </MenuItem>
+                  <Separator IsVisible="{Binding CanPurgeSelectedNode}" />
+                  <MenuItem Header="{Binding DeleteSelectedLabel}" IsVisible="{Binding CanPurgeSelectedNode}"
+                            Command="{Binding DeleteSelectedEntityCommand}" Foreground="{DynamicResource DangerBrush}">
                     <MenuItem.Icon>
                       <PathIcon Data="{x:Static app:Icons.Trash}" Width="12" Height="12" Foreground="{DynamicResource DangerBrush}" />
                     </MenuItem.Icon>
@@ -187,6 +227,11 @@
                             ToolTip.Tip="Dead-lettered messages"
                             IsVisible="{Binding DeadLetterBadge, Converter={x:Static ObjectConverters.IsNotNull}}">
                       <TextBlock Text="{Binding DeadLetterBadge}" />
+                    </Border>
+                    <Border Classes="pill" Classes.alert="{Binding IsErrorBadgeAlert}" Classes.muted="{Binding !IsErrorBadgeAlert}"
+                            ToolTip.Tip="{Binding ErrorBadgeTip}"
+                            IsVisible="{Binding ErrorBadge, Converter={x:Static ObjectConverters.IsNotNull}}">
+                      <TextBlock Text="{Binding ErrorBadge}" />
                     </Border>
                   </StackPanel>
                 </TreeDataTemplate>
@@ -340,6 +385,13 @@
                     <StackPanel Orientation="Horizontal" Spacing="8">
                       <PathIcon Data="{x:Static app:Icons.Trash}" Width="15" Height="15" />
                       <TextBlock Text="Purge DLQ" />
+                    </StackPanel>
+                  </Button>
+                  <Button Classes="dangerOutline large" Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).DeleteSelectedEntityCommand}"
+                          ToolTip.Tip="Permanently delete this queue or subscription from the namespace, with all its messages">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                      <PathIcon Data="{x:Static app:Icons.Trash}" Width="15" Height="15" />
+                      <TextBlock Text="Delete" />
                     </StackPanel>
                   </Button>
                 </StackPanel>
@@ -672,6 +724,8 @@
     <Border Grid.Row="1" Classes="statusbar">
       <DockPanel>
         <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <Button Classes="subtle link" Content="{Binding ZoomText}" Command="{Binding ResetZoomCommand}" Padding="0" FontSize="11"
+                  IsVisible="{Binding IsZoomed}" ToolTip.Tip="Zoom. Ctrl + and Ctrl − (or Ctrl+mouse wheel) change it; click or press Ctrl+0 for 100%." />
           <Button Classes="subtle link" Content="Options" Command="{Binding EditOptionsCommand}" Padding="0" FontSize="11" />
           <Button Classes="subtle link" Content="Check for updates" Command="{Binding CheckForUpdatesCommand}" Padding="0" FontSize="11" />
           <TextBlock Classes="muted" FontSize="11" VerticalAlignment="Center" Text="{Binding AppVersion, StringFormat='v{0}'}" />
@@ -684,4 +738,5 @@
       </DockPanel>
     </Border>
   </Grid>
+  </LayoutTransformControl>
 </Window>

@@ -39,6 +39,25 @@ public sealed class AppOptions
     /// <summary>Look for a newer release when the app starts.</summary>
     public bool CheckForUpdatesOnStartup { get; set; } = true;
 
+    /// <summary>Zoom steps, as in a web browser.</summary>
+    public static IReadOnlyList<double> ZoomSteps { get; } = [0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
+
+    /// <summary>How much the main window is scaled (1 = 100%). Changed with Ctrl +/−, Ctrl+0 and Ctrl+mouse wheel.</summary>
+    public double Zoom { get; set; } = 1.0;
+
+    /// <summary>Keeps a zoom level within the supported range (a bad value from the file means 100%).</summary>
+    public static double ClampZoom(double zoom) =>
+        double.IsFinite(zoom) && zoom > 0 ? Math.Clamp(zoom, ZoomSteps[0], ZoomSteps[^1]) : 1.0;
+
+    /// <summary>The next zoom step above or below <paramref name="zoom"/>.</summary>
+    public static double StepZoom(double zoom, bool zoomIn)
+    {
+        zoom = ClampZoom(zoom);
+        return zoomIn
+            ? ZoomSteps.FirstOrDefault(z => z > zoom + 0.001, ZoomSteps[^1])
+            : ZoomSteps.LastOrDefault(z => z < zoom - 0.001, ZoomSteps[0]);
+    }
+
     public AppOptions Clone() => (AppOptions)MemberwiseClone();
 
     public void CopyFrom(AppOptions other)
@@ -51,6 +70,7 @@ public sealed class AppOptions
         CheckForUpdatesOnStartup = other.CheckForUpdatesOnStartup;
         HighlightErrorQueues = other.HighlightErrorQueues;
         ErrorQueueSuffixes = other.ErrorQueueSuffixes?.Trim() ?? "";
+        Zoom = ClampZoom(other.Zoom);
     }
 }
 
