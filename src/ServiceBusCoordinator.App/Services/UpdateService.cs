@@ -40,7 +40,43 @@ public static class UpdateService
     {
         var install = Install ?? throw new InvalidOperationException("This copy is running from source and cannot update itself.");
         var prepared = await new UpdateInstaller(Http).PrepareAsync(update, install, progress, ct);
+
+        // A single-file app loads its assemblies from its own executable on first use. On Windows that happens by
+        // path, so once the executable is swapped, anything not yet loaded (for example System.IO.Pipes, needed to
+        // start the new version) can no longer be found. Load everything the app can reach while it still is.
+        PreloadReferencedAssemblies();
         UpdateInstaller.Apply(prepared, install);
+    }
+
+    /// <summary>Loads every assembly reachable from the app's references, so none has to be read after the swap.</summary>
+    private static void PreloadReferencedAssemblies()
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var pending = new Stack<Assembly>(AppDomain.CurrentDomain.GetAssemblies());
+        foreach (var loaded in pending)
+        {
+            seen.Add(loaded.GetName().Name ?? "");
+        }
+
+        while (pending.TryPop(out var assembly))
+        {
+            foreach (var reference in assembly.GetReferencedAssemblies())
+            {
+                if (reference.Name is null || !seen.Add(reference.Name))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    pending.Push(Assembly.Load(reference));
+                }
+                catch (Exception)
+                {
+                    // Some references only exist on other platforms; the app never needs those here.
+                }
+            }
+        }
     }
 
     /// <summary>Starts the newly installed version.</summary>
