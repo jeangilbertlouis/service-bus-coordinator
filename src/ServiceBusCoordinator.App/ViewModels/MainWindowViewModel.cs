@@ -217,6 +217,28 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         return node;
     }
 
+    partial void OnSelectedNodeChanged(TreeNodeViewModel? oldValue, TreeNodeViewModel? newValue)
+    {
+        // Counts change on refresh and after a purge; keep the context menu's purge items in step.
+        if (oldValue is not null)
+        {
+            oldValue.PropertyChanged -= OnSelectedNodePropertyChanged;
+        }
+
+        if (newValue is not null)
+        {
+            newValue.PropertyChanged += OnSelectedNodePropertyChanged;
+        }
+    }
+
+    private void OnSelectedNodePropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(EntityNodeViewModel.Entity))
+        {
+            PurgeSelectedCommand.NotifyCanExecuteChanged();
+        }
+    }
+
     partial void OnSelectedNodeChanged(TreeNodeViewModel? value)
     {
         if (value is EntityNodeViewModel entityNode)
@@ -521,7 +543,9 @@ public sealed partial class MainWindowViewModel : ObservableObject, IDisposable
         await entity.PurgeSourceAsync(source);
     }
 
-    private bool CanPurgeSelected(MessageSource source) => CanPurgeSelectedNode;
+    /// <summary>Greys out a context-menu purge when the counts show that sub-queue is empty.</summary>
+    private bool CanPurgeSelected(MessageSource source) =>
+        SelectedNode is EntityNodeViewModel node && EntityViewModel.HasPurgeable(node.Entity, source);
 
     /// <summary>"Delete queue…" or "Delete subscription…" for the selected entity.</summary>
     public string DeleteSelectedLabel => SelectedNode is EntityNodeViewModel { IsSubscription: true } ? "Delete subscription…" : "Delete queue…";

@@ -116,6 +116,9 @@ ServiceBusCoordinator.sln
 * Started from the large **Purge messages** / **Purge DLQ** buttons in a queue's or subscription's header (always the
   active messages / the dead-letter queue), the **Purge** button in the Messages toolbar (the sub-queue shown in the
   picker), or the tree's context menu.
+* The header buttons and the context-menu items are disabled when the last known counts show that sub-queue is empty
+  (active counts include scheduled messages on a queue). When the counts are unknown, for example without Manage
+  rights, they stay enabled. They update as the counts refresh.
 * Confirmation dialog requiring the entity name to be entered for large purges (more than 100 messages by default,
   configurable in Options, or an unknown count). The name is shown with a **Copy** button so it can be pasted;
   surrounding whitespace from a paste is ignored.
@@ -260,6 +263,10 @@ ServiceBusCoordinator.sln
   non-zero). Toolbar actions are grouped with dividers and icons; the message list is a card with a header row and
   zebra rows; a status bar shows progress and the app version.
 * Icons are small vector paths in `Icons.cs` (no icon font or image assets).
+* **Narrow windows.** The entity header uses `HeaderLayoutPanel` (in `Views`): the title and the large Purge/Delete
+  buttons sit side by side while both fit at their natural width, otherwise the buttons move onto their own line
+  below (and wrap further if needed). The kind pills follow the name, and only a name too long for the whole width is
+  shortened with an ellipsis, with the full name (and path) in a tooltip.
 * **Zoom.** Ctrl + / Ctrl − (also the keypad keys, and Cmd on macOS) or Ctrl+mouse wheel step through 50–200%
   like a browser; Ctrl+0 resets. The whole window content sits in a `LayoutTransformControl` scaled by the level, so
   layout reflows rather than stretching. The status bar shows the level (click for 100%) when it is not 100%. The level

@@ -4,6 +4,7 @@
         xmlns:vm="using:ServiceBusCoordinator.App.ViewModels"
         xmlns:core="using:ServiceBusCoordinator.Core.Models"
         xmlns:explorer="using:ServiceBusCoordinator.Core.Explorer"
+        xmlns:views="using:ServiceBusCoordinator.App.Views"
         x:Class="ServiceBusCoordinator.App.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="Service Bus Coordinator"
@@ -369,46 +370,53 @@
 
             <!-- Header -->
             <StackPanel DockPanel.Dock="Top" Spacing="14" Margin="0,0,0,6">
-              <Grid ColumnDefinitions="Auto,*,Auto">
-                <!-- Large purge buttons that don't depend on the sub-queue picked in the Messages tab. -->
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="12,0,0,0"
-                            IsVisible="{Binding HasMessages}">
-                  <Button Classes="dangerSolid large" Command="{Binding PurgeActiveCommand}"
-                          ToolTip.Tip="Permanently delete every active message (and deferred and scheduled ones)">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                      <PathIcon Data="{x:Static app:Icons.Trash}" Width="15" Height="15" />
-                      <TextBlock Text="Purge messages" />
-                    </StackPanel>
-                  </Button>
-                  <Button Classes="dangerSolid large" Command="{Binding PurgeDeadLetterCommand}"
-                          ToolTip.Tip="Permanently delete every message in the dead-letter queue">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                      <PathIcon Data="{x:Static app:Icons.Trash}" Width="15" Height="15" />
-                      <TextBlock Text="Purge DLQ" />
-                    </StackPanel>
-                  </Button>
-                  <Button Classes="dangerOutline large" Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).DeleteSelectedEntityCommand}"
-                          ToolTip.Tip="Permanently delete this queue or subscription from the namespace, with all its messages">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                      <PathIcon Data="{x:Static app:Icons.Trash}" Width="15" Height="15" />
-                      <TextBlock Text="Delete" />
-                    </StackPanel>
-                  </Button>
-                </StackPanel>
-                <Border Width="44" Height="44" CornerRadius="10" Background="{DynamicResource AccentSoftBrush}">
-                  <PathIcon Data="{Binding Icon}" Width="22" Height="22"
-                            Classes.queue="{Binding IsQueue}" Classes.topic="{Binding IsTopic}" Classes.subscription="{Binding IsSubscription}" />
-                </Border>
-                <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center" Spacing="2">
-                  <StackPanel Orientation="Horizontal" Spacing="8">
-                    <TextBlock Classes="h1" Text="{Binding Title}" />
-                    <Border Classes="pill"><TextBlock Text="{Binding KindName}" /></Border>
-                    <Border Classes="pill warn" IsVisible="{Binding RequiresSession}"><TextBlock Text="Sessions" /></Border>
-                    <Border Classes="pill warn" IsVisible="{Binding IsManual}"><TextBlock Text="Added manually" /></Border>
+              <!-- Title on the left, large purge/delete buttons on the right; the buttons move to their own line
+                   when the window is too narrow for both (HeaderLayoutPanel). -->
+              <views:HeaderLayoutPanel Spacing="12">
+                <Grid ColumnDefinitions="Auto,*">
+                  <Border Width="44" Height="44" CornerRadius="10" Background="{DynamicResource AccentSoftBrush}" VerticalAlignment="Center">
+                    <PathIcon Data="{Binding Icon}" Width="22" Height="22"
+                              Classes.queue="{Binding IsQueue}" Classes.topic="{Binding IsTopic}" Classes.subscription="{Binding IsSubscription}" />
+                  </Border>
+                  <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center" Spacing="2">
+                    <!-- Pills stay visible; a name too long even for its own line is shortened, in full on hover. -->
+                    <!-- Left-aligned, so the pills follow the name; the star column only shrinks when space runs out. -->
+                    <Grid ColumnDefinitions="*,Auto" HorizontalAlignment="Left">
+                      <TextBlock Classes="h1" Text="{Binding Title}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding Title}" />
+                      <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" Margin="8,0,0,0" VerticalAlignment="Center">
+                        <Border Classes="pill"><TextBlock Text="{Binding KindName}" /></Border>
+                        <Border Classes="pill warn" IsVisible="{Binding RequiresSession}"><TextBlock Text="Sessions" /></Border>
+                        <Border Classes="pill warn" IsVisible="{Binding IsManual}"><TextBlock Text="Added manually" /></Border>
+                      </StackPanel>
+                    </Grid>
+                    <TextBlock Classes="muted mono" Text="{Binding PathText}" TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding PathText}" />
                   </StackPanel>
-                  <TextBlock Classes="muted mono" Text="{Binding PathText}" />
-                </StackPanel>
-              </Grid>
+                </Grid>
+                <!-- Large purge buttons that don't depend on the sub-queue picked in the Messages tab. -->
+                <WrapPanel VerticalAlignment="Center" ItemSpacing="8" LineSpacing="8" IsVisible="{Binding HasMessages}">
+                    <Button Classes="dangerSolid large" Command="{Binding PurgeActiveCommand}"
+                            ToolTip.Tip="Permanently delete every active message (and deferred and scheduled ones)">
+                      <StackPanel Orientation="Horizontal" Spacing="8">
+                        <PathIcon Data="{x:Static app:Icons.Trash}" Width="15" Height="15" />
+                        <TextBlock Text="Purge messages" />
+                      </StackPanel>
+                    </Button>
+                    <Button Classes="dangerSolid large" Command="{Binding PurgeDeadLetterCommand}"
+                            ToolTip.Tip="Permanently delete every message in the dead-letter queue">
+                      <StackPanel Orientation="Horizontal" Spacing="8">
+                        <PathIcon Data="{x:Static app:Icons.Trash}" Width="15" Height="15" />
+                        <TextBlock Text="Purge DLQ" />
+                      </StackPanel>
+                    </Button>
+                    <Button Classes="dangerOutline large" Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).DeleteSelectedEntityCommand}"
+                            ToolTip.Tip="Permanently delete this queue or subscription from the namespace, with all its messages">
+                      <StackPanel Orientation="Horizontal" Spacing="8">
+                        <PathIcon Data="{x:Static app:Icons.Trash}" Width="15" Height="15" />
+                        <TextBlock Text="Delete" />
+                      </StackPanel>
+                    </Button>
+                </WrapPanel>
+              </views:HeaderLayoutPanel>
 
               <WrapPanel IsVisible="{Binding HasCounts}">
                 <Border Classes="stat">
