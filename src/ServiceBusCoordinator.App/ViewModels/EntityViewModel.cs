@@ -431,6 +431,8 @@ public sealed partial class EntityViewModel : ObservableObject
             OnPropertyChanged(nameof(HasDeadLetters));
             OnPropertyChanged(nameof(ScheduledCount));
             OnPropertyChanged(nameof(TransferDeadLetterCount));
+            PurgeActiveCommand.NotifyCanExecuteChanged();
+            PurgeDeadLetterCommand.NotifyCanExecuteChanged();
         }
         catch (Exception)
         {
@@ -516,12 +518,33 @@ public sealed partial class EntityViewModel : ObservableObject
     private Task PurgeAsync() => PurgeSourceAsync(Source);
 
     /// <summary>The header's Purge messages button: always the active messages, whatever sub-queue is being viewed.</summary>
-    [RelayCommand(CanExecute = nameof(NotBusy))]
+    [RelayCommand(CanExecute = nameof(CanPurgeActive))]
     private Task PurgeActiveAsync() => PurgeSourceAsync(MessageSource.Active);
 
     /// <summary>The header's Purge DLQ button: always the dead-letter queue.</summary>
-    [RelayCommand(CanExecute = nameof(NotBusy))]
+    [RelayCommand(CanExecute = nameof(CanPurgeDeadLetter))]
     private Task PurgeDeadLetterAsync() => PurgeSourceAsync(MessageSource.DeadLetter);
+
+    /// <summary>
+    /// How many messages a purge of <paramref name="source"/> would remove, from the last known counts, or null when the
+    /// counts are not known (for example without Manage rights).
+    /// </summary>
+    public static long? PurgeableCount(EntityInfo entity, MessageSource source) => entity.Counts is { } c
+        ? source switch
+        {
+            MessageSource.DeadLetter => c.DeadLetter,
+            MessageSource.TransferDeadLetter => c.TransferDeadLetter,
+            _ => c.Active + (entity.Kind == EntityKind.Queue ? c.Scheduled : 0),
+        }
+        : null;
+
+    /// <summary>Whether there is anything to purge, going by the counts. Unknown counts allow a purge.</summary>
+    public static bool HasPurgeable(EntityInfo entity, MessageSource source) =>
+        entity.HasMessages && PurgeableCount(entity, source) is null or > 0;
+
+    private bool CanPurgeActive() => NotBusy && HasPurgeable(Entity, MessageSource.Active);
+
+    private bool CanPurgeDeadLetter() => NotBusy && HasPurgeable(Entity, MessageSource.DeadLetter);
 
     /// <summary>Purges one sub-queue after confirmation; also used by the tree's context menu.</summary>
     public async Task PurgeSourceAsync(MessageSource source)
@@ -532,14 +555,7 @@ public sealed partial class EntityViewModel : ObservableObject
             return;
         }
 
-        var count = Entity.Counts is { } c
-            ? source switch
-            {
-                MessageSource.DeadLetter => c.DeadLetter,
-                MessageSource.TransferDeadLetter => c.TransferDeadLetter,
-                _ => c.Active + (Entity.Kind == EntityKind.Queue ? c.Scheduled : 0),
-            }
-            : (long?)null;
+        var count = PurgeableCount(Entity, source);
         var countText = count is { } n ? $"about {n:N0} message(s)" : "all messages";
         var extra = source == MessageSource.Active
             ? (Entity.Kind == EntityKind.Queue ? " Deferred and scheduled messages are removed too." : " Deferred messages are removed too.")
